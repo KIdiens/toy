@@ -1,0 +1,11 @@
+{"session": "toy-session-v1", "controller_args": {}, "end_ms": 700}
+{"t_ms": 300, "dir": "host", "line": "ARM 1"}
+{"t_ms": 320, "dir": "host", "line": "FRAME 0 1500 1550 1500 1500"}
+{"t_ms": 700, "dir": "wait"}
+{"t_ms": 0, "dir": "mcu", "line": "READY 1"}
+{"t_ms": 200, "dir": "mcu", "line": "STATE 0 1 1 0"}
+{"t_ms": 300, "dir": "mcu", "line": "OK ARM 1"}
+{"t_ms": 400, "dir": "mcu", "line": "STATE 1 1 1 1"}
+{"t_ms": 600, "dir": "mcu", "line": "STATE 1 1 1 1"}
+{"t_ms": 600, "dir": "mcu", "line": "SETTLED 0"}
+{"t_ms": 621, "dir": "mcu", "line": "FAULT INTERLOCK_OR_TIMEOUT"}

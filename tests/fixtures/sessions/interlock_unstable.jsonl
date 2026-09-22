@@ -1,0 +1,8 @@
+{"session": "toy-session-v1", "controller_args": {}, "end_ms": 400}
+{"t_ms": 100, "dir": "host", "line": "ARM 1"}
+{"t_ms": 400, "dir": "host", "line": "ARM 1"}
+{"t_ms": 0, "dir": "mcu", "line": "READY 1"}
+{"t_ms": 100, "dir": "mcu", "line": "ERR INTERLOCK"}
+{"t_ms": 200, "dir": "mcu", "line": "STATE 0 1 1 0"}
+{"t_ms": 400, "dir": "mcu", "line": "STATE 0 1 1 1"}
+{"t_ms": 400, "dir": "mcu", "line": "OK ARM 1"}

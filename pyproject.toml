@@ -1,0 +1,72 @@
+# toy/host 依赖与工具的唯一硬编码来源（Spec §4 + 10-tech-selection-matrix §12）
+# 业务代码不得再硬编码版本号；改版本只改本文件。
+# 前端无 Node 构建链（ADR-007）：本文件不得引入 npm / TypeScript / MSW Mock 相关依赖。
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toy-host"
+version = "0.1.0"
+description = "可换公仔 AI 语音动作玩具 · 主机编排程序（状态机 / 音频 / AI 路由 / 动作调度 / SQLite / 网页编排）"
+requires-python = ">=3.11"
+keywords = ["toy", "esp32", "state-machine", "fastapi", "sqlite", "serial", "no-hardware"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Private :: Do Not Upload",
+]
+
+# 运行时依赖：范围与本表逐条对齐 10-tech-selection-matrix §12。
+# 版本上限用于防止主版本漂移（如 FastAPI 0.129、pydantic 3）。
+dependencies = [
+    "fastapi>=0.128,<0.129",
+    "uvicorn>=0.34,<0.54",
+    "pydantic>=2.7,<3",
+    "pyserial==3.5",
+    "sounddevice==0.5.6",
+    "soundfile>=0.13.1,<0.15",
+    "requests>=2.32,<3",
+]
+
+[project.optional-dependencies]
+# 开发/测试组：pip install -e ".[dev]"
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[tool.setuptools]
+package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["host*", "sim*"]
+
+# 迁移 SQL 随包分发（wheel 构建；editable 安装直接读源码树）。
+[tool.setuptools.package-data]
+"host" = ["storage/migrations/*.sql"]
+
+# 让 `python -m host.main`（自 toy/ 根）与 `pytest` 都能在未安装或已安装两种情况下工作。
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["host", "sim", "tests"]
+# 静态资源与运行时数据目录不参与 lint。
+extend-exclude = ["data", "content", "host/web/static/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"

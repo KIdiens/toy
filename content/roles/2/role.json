@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "role_id": 2,
+  "name": "小波",
+  "config_version": "1.0.0",
+  "min_us": 1420,
+  "max_us": 1580,
+  "neutral_us": 1500,
+  "axes": ["左臂", "右臂", "头部左右", "腰部左右"],
+  "tts_voice": "Ethan",
+  "language": "Auto",
+  "actions": ["wave"]
+}

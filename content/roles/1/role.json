@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "role_id": 1,
+  "name": "小星",
+  "config_version": "1.0.0",
+  "min_us": 1400,
+  "max_us": 1600,
+  "neutral_us": 1500,
+  "axes": ["左臂", "右臂", "头部左右", "腰部左右"],
+  "tts_voice": "Cherry",
+  "language": "Auto",
+  "actions": ["wave", "nod"]
+}

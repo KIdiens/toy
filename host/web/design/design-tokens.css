@@ -1,0 +1,291 @@
+/* ============================================================================
+ * 可换公仔 AI 语音动作玩具 · 主机管理界面 Design Tokens
+ * 版本 v1.1 | 设计师：颜好看 | 基于 开发书 v1.0 第 7 / 9.3 / 13 / 15 章
+ * 四层架构：A1-identity / A1-structure / A2 / B-slot / C-extension
+ * 规则：禁止硬编码颜色（唯一例外 #fff / #000 亦不推荐）；间距 4px 网格
+ * 主题：浅色=管理页默认（家长阅读） 深色=编排器默认（工作台）
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------------------
+ * 1. 字体（A1-identity）—— 离线可用硬约束处理
+ *    决策：**自托管字体子集**，不使用外链 @import。
+ *    开发书硬约束为离线可用；若走 Google Fonts 外链，设备无外网时 3 款字体全部回退，
+ *    µs 数值列会失去对齐。故：
+ *      1) @font-face 指向本地 /assets/fonts/*.woff2（子集：中文仅收录界面常用字）
+ *      2) 回退链为"等宽优先"，即使字体文件缺失，mono 仍落到系统等宽字体，对齐不塌
+ *      3) 三种字体均配 font-display: swap，避免首屏白字
+ *    子集生成参考（构建期一次性执行，非运行时）：
+ *      pyftsubset Lexend-Regular.ttf --unicodes=U+0020-007E --flavor=woff2
+ *    许可：Lexend/Figtree/JetBrains Mono/Noto Sans SC 均为 SIL OFL 1.1，允许自托管。
+ *    降级行为：字体文件缺失 → 回退至系统中文字体栈；numerals 仍由 tabular-nums 保证列对齐。
+ * -------------------------------------------------------------------------*/
+@font-face { font-family: 'Lexend'; src: url('/assets/fonts/Lexend-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('/assets/fonts/Figtree-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/assets/fonts/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/assets/fonts/JetBrainsMono-Medium.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Noto Sans SC'; src: url('/assets/fonts/NotoSansSC-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
+
+:root {
+  --font-display: 'Lexend', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body:    'Figtree', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:    'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, 'Noto Sans SC', ui-monospace, monospace;
+
+  /* 字重三级（Read / Emphasize / Announce） */
+  --fw-read: 400;
+  --fw-emphasize: 500;
+  --fw-announce: 600;
+
+  /* 字号阶梯（8 级） */
+  --text-xs:   0.75rem;    /* 12px  标签 / 元数据 */
+  --text-sm:   0.8125rem;  /* 13px  次级文本 / 表头 */
+  --text-base: 0.9375rem;  /* 15px  工具 UI 正文默认 */
+  --text-md:   1rem;       /* 16px  家长页阅读正文 */
+  --text-lg:   1.125rem;   /* 18px  小节标题 */
+  --text-xl:   1.375rem;   /* 22px  区块标题 */
+  --text-2xl:  1.75rem;    /* 28px  页面标题 */
+  --text-3xl:  2.125rem;   /* 34px  空态/引导大标题 */
+
+  /* 行高 */
+  --leading-display: 1.15;
+  --leading-tight:   1.25;
+  --leading-body:    1.6;
+
+  /* 字距 */
+  --tracking-display: -0.02em;  /* 标题负字距 */
+  --tracking-caps:     0.07em;  /* ALL CAPS 标签 */
+  --tracking-body:     0;       /* 正文 + 等宽数值 */
+
+  /* ---------------------------------------------------------------- A1 颜色（浅色主题：管理页默认） */
+  --bg:            #F6F8F7;   /* 页面背景（中性带极淡青绿偏，非米色） */
+  --surface:       #FFFFFF;   /* 卡片 / 容器 */
+  --surface-warm:  #EDF1F0;   /* 三级表面 / 表头底 */
+  --fg:            #14201E;   /* 主文本（近黑带绿调，非纯黑） */
+  --fg-2:          #33403D;   /* 次级文本 */
+  --muted:         #556663;   /* 副文本 / 说明 */
+  --meta:          #8A9793;   /* 三级前景 / 元数据 */
+  --border:        #DDE4E2;   /* 默认边框 */
+  --border-soft:   #EAEFED;   /* 内部行分隔 */
+
+  --accent:        #0F766E;   /* 品牌强调（石油青 teal-700） */
+  --accent-on:     #FFFFFF;   /* accent 背景上的前景 */
+  --accent-hover:  #0D6259;
+  --accent-active: #0A4F48;
+  --accent-soft:   #E4F1EF;   /* accent 低透明底（选中行 / 轻高亮） */
+
+  /* ---------------------------------------------------------------- A2 语义色（浅色主题） */
+  --success: #15803D;
+  --warn:    #B45309;
+  --danger:  #B91C1C;
+  --info:    #0E7490;
+
+  /* ---------------------------------------------------------------- C-extension 领域色：安全限位 / 连接 / 轨道 */
+  --limit-track:        #E8ECEB;  /* 限位轨道底色 */
+  --limit-normal:       #15803D;  /* 在安全区间 */
+  --limit-near:         #D97706;  /* 接近限位（±10% 区间） */
+  --limit-at:           #DC2626;  /* 到达/超出限位 → 阻断 */
+  --limit-neutral-mark: #64748B;  /* 1500µs 中位刻度 */
+
+  --playhead:     #B45309;   /* 播放指针（铜橙，行业惯例区别于品牌色） */
+  --conn-offline: #8A9793;   /* 未连接设备 */
+  --conn-online:  #15803D;   /* 已连接·空闲 */
+  --conn-active:  #0E7490;   /* 已连接·运动中（动态） */
+  --conn-fault:   #B91C1C;   /* 故障·停机锁定 */
+
+  /* 四轴轨道身份色（仅用于 6px 色点 + 20% 轨道底色，不用于关键帧） */
+  --track-1: #2563EB;  /* 轴1 左臂 */
+  --track-2: #0E7490;  /* 轴2 右臂 */
+  --track-3: #B45309;  /* 轴3 头部左右 */
+  --track-4: #7C3AED;  /* 轴4 腰部左右（纯色，禁止作渐变） */
+
+  /* ---------------------------------------------------------------- 间距（4px 网格） */
+  --space-1: 4px;  --space-2: 8px;   --space-3: 12px;  --space-4: 16px;
+  --space-5: 20px; --space-6: 24px;  --space-8: 32px;  --space-10: 40px;
+  --space-12: 48px; --space-16: 64px;
+
+  /* ---------------------------------------------------------------- 圆角 */
+  --radius-sm: 6px;    /* 按钮 / 输入框 / 徽标 */
+  --radius-md: 10px;   /* 卡片 / 面板 */
+  --radius-lg: 14px;   /* 弹窗 / 抽屉 */
+  --radius-pill: 9999px;
+
+  /* ---------------------------------------------------------------- 层级与阴影（禁止 1px 边框与 blur≥16 同时出现） */
+  --elev-flat:   none;
+  --elev-ring:   0 0 0 1px var(--border);
+  --elev-raised: 0 1px 2px rgba(0,0,0,0.05), 0 8px 24px -8px rgba(0,0,0,0.12);
+
+  --z-base: 0; --z-dropdown: 1000; --z-sticky: 1100;
+  --z-drawer: 1200; --z-modal: 1300; --z-toast: 1400;
+
+  /* ---------------------------------------------------------------- 焦点与动效 */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  --motion-fast: 120ms;  /* 即时反馈 / hover */
+  --motion-base: 180ms;  /* 状态确认 / 展开 */
+  --motion-slow: 260ms;  /* 弹窗 / 抽屉 */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---------------------------------------------------------------- 布局 */
+  --container-max:  1440px;  /* 编排器工作台 */
+  --container-read: 720px;   /* 家长页阅读列 */
+  --rail-left: 260px;        /* 左栏：角色 / 四轴轨道列表 */
+  --rail-right: 300px;       /* 右栏：关键帧属性 / 限位 */
+  --topbar-h: 56px;
+  --section-y: var(--space-10); /* 40px */
+  --touch-min: 44px;
+
+  color-scheme: light;
+}
+
+/* ============================================================================
+ * 深色主题 —— 编排器默认（工作台，长时间精调）
+ * 层级用亮度递进表达，不用阴影：bg → surface → surface-2 → surface-3
+ * ==========================================================================*/
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  --bg:         #0C1211;
+  --surface:    #121A18;
+  --surface-2:  #19231F;
+  --surface-3:  #212E2A;
+  --surface-warm: #19231F;
+
+  --fg:    #EAF1EF;
+  --fg-2:  #C7D5D1;
+  --muted: #9DB0AB;
+  --meta:  #6B7C78;
+
+  --border:      rgba(255,255,255,0.08);
+  --border-soft: rgba(255,255,255,0.05);
+
+  --accent:        #14B8A6;
+  --accent-on:     #04211D;
+  --accent-hover:  #2DD4BF;
+  --accent-active: #5EEAD4;
+  --accent-soft:   rgba(20,184,166,0.14);
+
+  --success: #34D399;
+  --warn:    #FBBF24;
+  --danger:  #F87171;
+  --info:    #22D3EE;
+
+  --limit-track:        #1E2A26;
+  --limit-normal:       #34D399;
+  --limit-near:         #FBBF24;
+  --limit-at:           #F87171;
+  --limit-neutral-mark: #94A3B8;
+
+  --playhead:     #F59E0B;
+  --conn-offline: #6B7C78;
+  --conn-online:  #34D399;
+  --conn-active:  #22D3EE;
+  --conn-fault:   #F87171;
+
+  --track-1: #60A5FA;
+  --track-2: #22D3EE;
+  --track-3: #F59E0B;
+  --track-4: #A78BFA;
+
+  --elev-ring:   0 0 0 1px var(--border);
+  --elev-raised: 0 2px 4px rgba(0,0,0,0.4), 0 12px 32px -12px rgba(0,0,0,0.6);
+
+  color-scheme: dark;
+}
+
+/* ============================================================================
+ * 基础重置与无障碍
+ * ==========================================================================*/
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  font-weight: var(--fw-read);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-announce);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  margin: 0;
+}
+
+/* 数值 / 时间码 / µs：等宽 + 表格数字，避免跳动 */
+.num, code, kbd, .mono, [data-num] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-body);
+}
+
+/* 可见焦点环（键盘可达，禁止移除） */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* 减弱动效（强制支持） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================================
+ * 组件基元（B-slot）
+ * ==========================================================================*/
+.btn {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  min-height: var(--touch-min); padding: 10px var(--space-4);
+  border-radius: var(--radius-sm); border: 1px solid transparent;
+  font: inherit; font-weight: var(--fw-emphasize); cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard);
+}
+.btn--primary   { background: var(--accent); color: var(--accent-on); }
+.btn--primary:hover  { background: var(--accent-hover); }
+.btn--primary:active { background: var(--accent-active); }
+.btn--secondary { background: transparent; color: var(--accent); border-color: var(--border); }
+.btn--secondary:hover { background: var(--accent-soft); border-color: var(--accent); }
+.btn--ghost     { background: transparent; color: var(--fg-2); }
+.btn--ghost:hover { background: var(--accent-soft); }
+.btn--danger    { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn--danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.btn[disabled], .btn[aria-disabled="true"] {
+  opacity: 0.45; cursor: not-allowed; filter: saturate(0.6);
+}
+
+/* 连接状态 chip（离线仍可用是硬约束的核心表达） */
+.conn { display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); font-weight: var(--fw-emphasize); }
+.conn__dot { width: 8px; height: 8px; border-radius: var(--radius-pill); }
+.conn--offline .conn__dot { background: var(--conn-offline); }
+.conn--online  .conn__dot { background: var(--conn-online); }
+.conn--active  .conn__dot { background: var(--conn-active);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--conn-active) 60%, transparent);
+  animation: pulse 1.6s var(--ease-standard) infinite; }
+.conn--fault   .conn__dot { background: var(--conn-fault); }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--conn-active) 60%,transparent);} 70%{box-shadow:0 0 0 6px transparent;} 100%{box-shadow:0 0 0 0 transparent;} }
+
+/* 无数据占位（离线时数值区，明确"无数据"≠"值为 0"） */
+.no-data {
+  color: var(--meta); font-family: var(--font-mono);
+  background-image: repeating-linear-gradient(45deg,
+    var(--border-soft) 0 4px, transparent 4px 8px);
+  border-radius: var(--radius-sm); padding: 2px 8px;
+}
+
+/* 限位区间带（轨道背景） */
+.limit-band {
+  background: linear-gradient(90deg,
+    var(--limit-near) 0, var(--limit-normal) 10%,
+    var(--limit-normal) 90%, var(--limit-near) 100%);
+}

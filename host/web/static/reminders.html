@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>提醒管理 · 玩具主机</title>
+  <meta name="description" content="创建与取消提醒：时间按 Asia/Shanghai 展示、按 UTC 存储，时间不可靠时暂停绝对提醒。">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <app-topbar active="reminders">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+  </app-topbar>
+
+  <main class="read" id="main">
+    <page-header icon="alarm-clock" title="提醒管理"
+      subtitle="先看「下次会发生什么」，再决定加、改或取消。提醒存 UTC、按 Asia/Shanghai 展示。">
+      <button class="btn btn--primary" type="button" id="new-reminder">新建提醒</button>
+    </page-header>
+
+    <div style="margin-bottom: var(--space-5)">
+      <clock-warning id="clock-warn" state="unsynced" class="hidden"></clock-warning>
+    </div>
+
+    <reminder-list id="list" busy="true"></reminder-list>
+    <div id="empty-slot"></div>
+
+    <section class="section" style="margin-top: var(--space-6)">
+      <reminder-form id="form" mode="create"></reminder-form>
+    </section>
+
+    <footer class="section xs meta">
+      <hr class="hr">
+      <p id="tz-note">共 0 条提醒</p>
+      <div class="rowflex">
+        <span>夜间静音时段设备不会主动发声；跨日/断电恢复的提醒会标注「已恢复」。</span>
+        <span class="grow"></span>
+        <button class="btn btn--ghost" type="button" id="retry">重试读取</button>
+      </div>
+    </footer>
+  </main>
+
+  <toast-stack></toast-stack>
+  <noscript><p style="padding: var(--space-6)">本界面需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('reminders');
+  </script>
+</body>
+</html>

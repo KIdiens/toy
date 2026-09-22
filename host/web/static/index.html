@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设备状态 · 玩具主机</title>
+  <meta name="description" content="可换公仔 AI 语音动作玩具主机：设备连接状态、四轴目标位置、安全联锁前置条件与故障停机信息。">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles-editor.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <app-topbar active="status">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+    <role-chip id="role"></role-chip>
+    <stub-badge id="stub" provider="stub"></stub-badge>
+  </app-topbar>
+
+  <main class="wrap" id="main">
+    <device-banner id="banner" mode="offline"></device-banner>
+
+    <div style="margin-top: var(--space-5)">
+      <page-header icon="gauge" title="设备状态"
+        subtitle="先确认「现在能不能动」，再决定「为什么不能动」。离线是预期状态：界面照常可用，动作只预演、不发送。"></page-header>
+    </div>
+
+    <section class="section" aria-labelledby="h-axes">
+      <div class="section__head">
+        <div><h2 class="section__title" id="h-axes">四轴实时位置</h2>
+          <p class="section__hint">数值为<strong>目标位置</strong>（指令值）。PWM 舵机无位置反馈，因此不显示「实际角度」；
+            无数据时显示 — 并加斜纹底，表示「无数据」而非「值为 0」。</p></div>
+      </div>
+      <div class="card">
+        <axis-limit-bar axis="1" min-us="1400" max-us="1600" neutral-us="1500"></axis-limit-bar>
+        <axis-limit-bar axis="2" min-us="1400" max-us="1600" neutral-us="1500"></axis-limit-bar>
+        <axis-limit-bar axis="3" min-us="1400" max-us="1600" neutral-us="1500"></axis-limit-bar>
+        <axis-limit-bar axis="4" min-us="1400" max-us="1600" neutral-us="1500"></axis-limit-bar>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="h-interlock">
+      <interlock-checklist id="interlock" docked="false" estop-healthy="false" role-match="false"></interlock-checklist>
+    </section>
+
+    <div id="fault-slot"></div>
+
+    <footer class="section xs meta" aria-label="审计元信息">
+      <hr class="hr">
+      <div class="rowflex">
+        <span>session_generation：<span class="num" id="meta-gen">—</span></span>
+        <span>固件协议：<span id="meta-proto">—</span></span>
+        <span>最后刷新：<span class="num" id="meta-fetch">—</span></span>
+      </div>
+      <p style="margin-top: var(--space-2)">本页只读展示，不含任何写操作；接口不返回密钥，前端也不缓存敏感字段。</p>
+    </footer>
+  </main>
+
+  <toast-stack></toast-stack>
+
+  <dialog id="guide" class="dlg" aria-labelledby="guide-t">
+    <h2 class="dlg__title" id="guide-t">连接指引 · 前置条件</h2>
+    <div class="dlg__body">
+      <ul style="padding-left: 1.1em; line-height: var(--leading-body)">
+        <li>公仔插到位（Dock 到位信号有效）。</li>
+        <li>急停处于健康状态（常闭触点闭合）。</li>
+        <li>公仔电阻编号与角色配置文件一致，且编号稳定 ≥200ms。</li>
+        <li>主机已启动本机服务：<span class="num">python -m host.main --simulate</span>，页面与接口同源。</li>
+      </ul>
+      <p class="small muted">任一条件不满足，动作都不会下发到设备；这不是错误，而是安全联锁的正常表现。</p>
+    </div>
+    <div class="dlg__actions">
+      <button class="btn btn--primary" type="button" id="guide-close">知道了</button>
+    </div>
+  </dialog>
+
+  <noscript><p style="padding: var(--space-6)">本界面需要 JavaScript 才能连接设备服务。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('status');
+  </script>
+</body>
+</html>

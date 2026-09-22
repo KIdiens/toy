@@ -1,0 +1,5 @@
+# 占位说明（非运行时数据）：本目录是 Spec §4 目录结构的组成部分——运行时库 / 日志 / 缓存落盘于此
+# （默认 DB_PATH = data/toy.sqlite3，见 host/config/defaults.toml）。
+# .gitignore 以 data/* 忽略目录内容、但用 !data/.gitkeep 保留本文件，确保 clone 后 data/ 目录仍存在：
+# pytest --basetemp=data/... 的父目录与首次启动建库都依赖它，缺目录会让测试在 setup 阶段直接 56 报错。
+# 请勿把本目录或本文件当作临时产物删除。

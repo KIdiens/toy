@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>动作编排器 · 玩具主机</title>
+  <meta name="description" content="四轴关键帧编排工作台：时间轴、菱形关键帧、音频波形轨、限位校验与离线本地预演。">
+  <meta name="color-scheme" content="dark light">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles-editor.css">
+</head>
+<body>
+  <a class="skip-link" href="#tl-inner">跳到时间轴</a>
+
+  <app-topbar active="editor">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+  </app-topbar>
+
+  <editor-shell>
+    <div slot="left" class="stack">
+      <role-select id="role"></role-select>
+      <hr class="hr">
+      <track-list id="tracks"></track-list>
+      <hr class="hr">
+      <action-file-list id="files"></action-file-list>
+    </div>
+
+    <div slot="center">
+      <div class="editor__toolbar">
+        <timecode-display id="tc" ms="0" total-ms="0"></timecode-display>
+        <span class="grow"></span>
+        <span class="chip">离线预演 · 本地插值 s(u)=3u²−2u³</span>
+        <button class="btn btn--ghost" type="button" id="import-btn">导入角色包</button>
+        <button class="btn btn--ghost" type="button" id="export-btn">导出动作</button>
+      </div>
+
+      <device-banner id="offline-banner" mode="offline"></device-banner>
+
+      <div class="tl">
+        <div class="tl__scroll">
+          <div class="tl__inner" id="tl-inner">
+            <timeline-ruler id="ruler" duration-ms="6000" playhead-ms="0"></timeline-ruler>
+            <track-lane id="lane-0" axis="0" min-us="1400" max-us="1600" muted="false"></track-lane>
+            <track-lane id="lane-1" axis="1" min-us="1400" max-us="1600" muted="false"></track-lane>
+            <track-lane id="lane-2" axis="2" min-us="1400" max-us="1600" muted="false"></track-lane>
+            <track-lane id="lane-3" axis="3" min-us="1400" max-us="1600" muted="false"></track-lane>
+            <audio-track-lane id="audio" duration-ms="6000" offset-ms="0" src=""></audio-track-lane>
+            <timeline-playhead id="ph" ms="0" duration-ms="6000"></timeline-playhead>
+          </div>
+        </div>
+      </div>
+
+      <div class="editor__toolbar">
+        <button class="btn btn--secondary" type="button" id="kf-insert">在播放指针处插入关键帧</button>
+        <span class="grow"></span>
+        <span class="xs meta">键盘：左右方向键移播放指针，选中帧后左右键调时间、上下键调脉宽、Shift 加速、Delete 删除</span>
+      </div>
+
+      <transport-bar id="transport" playing="false" looping="false" preview-only="true" duration-ms="6000"></transport-bar>
+    </div>
+
+    <div slot="right" class="stack">
+      <keyframe-inspector id="inspector" max-speed="300"></keyframe-inspector>
+      <hr class="hr">
+      <axis-limit-panel id="limits" nodata="true"></axis-limit-panel>
+      <p class="xs meta">限位真源为角色配置 <span class="num">min_us / max_us</span>；接口暂未暴露该字段，此处显示固件台架保守值 1400–1600µs。</p>
+      <hr class="hr">
+      <validate-result-list id="validate"></validate-result-list>
+      <hr class="hr">
+      <play-guard-button id="guard" disabled-reason="未连接设备"></play-guard-button>
+      <p class="xs meta">「下发给设备」需携带预期 role_id 与动作版本；第二个播放请求默认 409 拒绝，绝不静默叠加两条时间轴。</p>
+    </div>
+  </editor-shell>
+
+  <input type="file" id="pack-file" accept=".zip,application/zip" hidden>
+  <toast-stack></toast-stack>
+  <import-rolepack-dialog id="impdialog"></import-rolepack-dialog>
+
+  <dialog id="guide" class="dlg" aria-labelledby="guide-t">
+    <h2 class="dlg__title" id="guide-t">连接指引 · 为什么不能下发</h2>
+    <div class="dlg__body">
+      <p>当前未检测到设备，因此只能预演（时间轴、波形、曲线采样全部在本地完成，设备不动作）。</p>
+      <ul style="padding-left: 1.1em">
+        <li>公仔插到位、急停健康、电阻编号与角色文件一致。</li>
+        <li>启动本机服务：<span class="num">python -m host.main --simulate</span>。</li>
+        <li>下发时接口校验预期 role_id 与动作版本，角色已变更会被拒绝。</li>
+      </ul>
+    </div>
+    <div class="dlg__actions"><button class="btn btn--primary" type="button" id="guide-close">知道了</button></div>
+  </dialog>
+
+  <noscript><p style="padding: var(--space-6)">本编排器需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('editor');
+  </script>
+</body>
+</html>

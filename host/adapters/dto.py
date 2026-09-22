@@ -1,0 +1,53 @@
+"""适配层 DTO 转换：core/storage 结构 → web 出参字典。
+
+纯函数、无业务规则、无 I/O；把仓储行类型与设置键值映射成契约形状（SPEC §5）。
+布尔/枚举的**字符串解析**在这里收口（存储层只存字符串，不解释）。
+"""
+from __future__ import annotations
+
+from typing import Any
+
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def as_bool(value: str | None, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in TRUE_VALUES
+
+
+def memory_dto(memory) -> dict[str, Any]:
+    return {
+        "id": int(memory.id),
+        "profile_id": str(memory.profile_id),
+        "kind": str(memory.kind),
+        "value": str(memory.value),
+        "confirmed": bool(memory.confirmed),
+        "created_at": str(memory.created_at),
+        "expires_at": memory.expires_at,
+    }
+
+
+def reminder_dto(reminder) -> dict[str, Any]:
+    return {
+        "id": str(reminder.id),
+        "profile_id": "" if reminder.profile_id is None else str(reminder.profile_id),
+        "text": reminder.text or "",
+        "due_at_utc": reminder.due_at_utc or "",
+        "timezone": reminder.timezone or "",
+        "repeat_rule": reminder.repeat_rule,
+        "status": reminder.status or "pending",
+        "last_fired_at": reminder.last_fired_at,
+        "idempotency_key": reminder.idempotency_key,
+    }
+
+
+def settings_dto(values: dict[str, str], *, sim_mode: bool, wifi_ssid: str = "") -> dict[str, Any]:
+    return {
+        "volume_level": values.get("volume", "mid"),
+        "language": values.get("language", "Auto"),
+        "memory_enabled": as_bool(values.get("memory_enabled"), default=True),
+        "content_rating_max": values.get("content_rating_max", "kid"),
+        "wifi_ssid": wifi_ssid,
+        "sim_mode": sim_mode,
+    }

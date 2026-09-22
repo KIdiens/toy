@@ -1,0 +1,103 @@
+@import url("/design/design-tokens.css");
+/* ============================================================================
+ * host/web/static/styles-editor.css — 编排器工作台 / 四轴限位 / 时间轴（深色默认）
+ * 仅 editor.html 引用；与 styles.css 同规则：不出现任何字面色值。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 限位横条 */
+.axis-row { display: grid; grid-template-columns: 148px 1fr 168px; gap: var(--space-4); align-items: center;
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--border-soft); }
+.axis-row__id { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.axis-row__dot { width: 6px; height: 6px; border-radius: var(--radius-pill); flex: none; background: var(--track-1); }
+.axis-row__name { font-weight: var(--fw-emphasize); color: var(--fg); }
+.axis-track { position: relative; height: 22px; border-radius: var(--radius-sm); background: var(--limit-track); overflow: hidden; }
+.axis-band { position: absolute; inset: 0 0 0 0; }
+.axis-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--limit-neutral-mark); left: 50%; }
+.axis-cursor { position: absolute; top: 0; bottom: 0; width: 3px; left: var(--pos, 50%);
+  transform: translateX(-1.5px); background: var(--fg); border-radius: 2px; }
+.axis-row--near .axis-cursor { background: var(--limit-near); }
+.axis-row--at .axis-cursor { background: var(--limit-at); }
+.axis-row--nodata .axis-cursor { display: none; }
+.axis-row--nodata .axis-band { background: none; }
+.axis-row__readout { display: flex; gap: var(--space-3); justify-content: flex-end; }
+.readout { text-align: right; min-width: 0; }
+.readout__label { font-size: var(--text-xs); color: var(--meta); }
+.readout__value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--fg); }
+.readout__unit { color: var(--meta); font-size: var(--text-xs); }
+
+/* ---------------------------------------------------------------- 工作台三栏 */
+.editor { display: grid; grid-template-columns: var(--rail-left) minmax(0,1fr) var(--rail-right);
+  gap: 0; min-height: calc(100dvh - var(--topbar-h)); }
+.editor__rail { background: var(--surface); border-right: 1px solid var(--border); padding: var(--space-4); overflow: auto; }
+.editor__rail--right { border-right: 0; border-left: 1px solid var(--border); }
+.editor__center { background: var(--bg); display: flex; flex-direction: column; min-width: 0; }
+.rail-title { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-caps);
+  color: var(--meta); font-weight: var(--fw-announce); margin-bottom: var(--space-3); }
+.track-item { display: grid; grid-template-columns: 10px 1fr auto; gap: var(--space-3); align-items: center;
+  width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit;
+  padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer; }
+.track-item:hover { background: var(--surface-warm); }
+.track-item[aria-selected="true"] { background: var(--accent-soft); }
+.track-item__dot { width: 6px; height: 6px; border-radius: var(--radius-pill); }
+.track-item__name { font-weight: var(--fw-emphasize); font-size: var(--text-sm); color: var(--fg); }
+.track-item__sub { font-size: var(--text-xs); color: var(--meta); font-family: var(--font-mono); }
+.file-item { display: flex; align-items: center; gap: var(--space-2); width: 100%; text-align: left;
+  padding: var(--space-2); border-radius: var(--radius-sm); background: none; border: 0; color: var(--fg-2);
+  font: inherit; font-size: var(--text-sm); cursor: pointer; min-height: var(--touch-min); }
+.file-item:hover { background: var(--surface-warm); }
+.file-item[aria-current="true"] { background: var(--accent-soft); color: var(--accent); }
+.editor__toolbar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; }
+.timecode { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--fg); }
+.transport { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; }
+.seg { display: inline-flex; gap: var(--space-2); align-items: center; }
+.inspector__row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--border-soft); }
+.inspector__k { color: var(--muted); font-size: var(--text-sm); }
+.inspector__v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+.issue { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-soft); font-size: var(--text-sm); }
+.issue--error .ic { color: var(--danger); }
+.issue--warn .ic { color: var(--warn); }
+.issue--ok .ic { color: var(--success); }
+.issue__path { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--meta); }
+
+/* ---------------------------------------------------------------- 时间轴四轨 */
+.tl { position: relative; padding: var(--space-2) var(--space-4); }
+.tl__scroll { overflow-x: auto; }
+.tl__inner { position: relative; min-width: 100%; }
+.ruler { position: relative; height: 26px; border-bottom: 1px solid var(--border); cursor: ew-resize; }
+.ruler__tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); }
+.ruler__label { position: absolute; top: 2px; font-family: var(--font-mono); font-size: 10px; color: var(--meta); }
+.lane { position: relative; height: 40px; border-bottom: 1px solid var(--border-soft); background: var(--surface); }
+.lane[data-muted="true"] { opacity: 0.5; }
+.lane__band { position: absolute; left: 0; right: 0; top: 4px; bottom: 4px; border-radius: var(--radius-sm); }
+.kf { position: absolute; top: 50%; width: 14px; height: 14px; margin-left: -7px; margin-top: -7px;
+  transform: rotate(45deg); background: var(--fg); border: 1px solid var(--bg); cursor: grab; padding: 0; }
+.kf[aria-selected="true"] { background: var(--accent); }
+.kf[data-out="true"] { background: var(--danger); animation: flash 0.5s var(--ease-standard) 3; }
+@keyframes flash { 50% { opacity: 0.25; } }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--playhead); z-index: 2; }
+.playhead__grip { position: absolute; top: -3px; left: -5px; width: 12px; height: 12px; border-radius: 2px; background: var(--playhead); cursor: ew-resize; }
+.audio-lane { position: relative; height: 46px; border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-warm); overflow: hidden; }
+.wave { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; gap: 1px; }
+.wave__bar { width: 2px; background: var(--info); border-radius: 1px; }
+
+/* ---------------------------------------------------------------- 响应式 */
+@media (max-width: 1280px) { .editor { grid-template-columns: 232px minmax(0,1fr) 260px; } }
+@media (max-width: 1024px) {
+  .editor { grid-template-columns: minmax(0,1fr) 260px; }
+  .editor__rail--left { display: none; }
+  .editor__rail--left[data-open="true"] { display: block; position: fixed; left: 0; top: var(--topbar-h); bottom: 0;
+    width: var(--rail-left); z-index: var(--z-drawer); box-shadow: var(--elev-raised); }
+}
+@media (max-width: 768px) {
+  .editor { grid-template-columns: minmax(0,1fr); }
+  .editor__rail--right { position: fixed; left: 0; right: 0; bottom: 0; top: auto; max-height: 60dvh;
+    border-left: 0; border-top: 1px solid var(--border); z-index: var(--z-drawer); box-shadow: var(--elev-raised);
+    transform: translateY(100%); transition: transform var(--motion-slow) var(--ease-standard); }
+  .editor__rail--right[data-open="true"] { transform: none; }
+  .axis-row { grid-template-columns: 1fr; gap: var(--space-2); }
+}

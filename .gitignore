@@ -1,0 +1,44 @@
+# 运行时数据与密钥：内容绝不入库，但 data/ 目录本身要在（Spec §4）
+# 注意：不能写 `data/`（整目录被排除后无法用 ! 再包含子文件），须写 `data/*` + 例外。
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.env
+.env.*
+secrets/
+
+# 用户内容与音频缓存：本地导出，不入库
+content/audio/*.wav
+content/audio/*.mp3
+content/roles/**/imported/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 日志
+*.log
+logs/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 前端浏览器验证截图产物与一次性跑测目录（可重新生成，不入库）
+_verify_shots*/
+_scratch/

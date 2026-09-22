@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设置 · 玩具主机</title>
+  <meta name="description" content="音量语言、网络配网、儿童模式、内容审核与高级危险区设置。密码永不回显。">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <app-topbar active="settings">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+  </app-topbar>
+
+  <main class="read" id="main">
+    <page-header icon="settings" title="设置"
+      subtitle="逐块确认的系统台账：先看日常可调项，再定边界项，最后才是不可逆的危险区。"></page-header>
+
+    <settings-section icon="volume-2" title="音量与语言" hint="日常高频项，置顶。">
+      <volume-select id="volume" value="mid"></volume-select>
+      <hr class="hr">
+      <language-select id="language" value="Auto"></language-select>
+    </settings-section>
+
+    <settings-section icon="wifi" title="网络与配网" hint="本阶段仅绑回环地址；开放局域网需登录并加 CSRF 防护。">
+      <wifi-config id="wifi" configured="false" conn-state="offline"></wifi-config>
+      <div class="rowflex" style="margin-top: var(--space-3)">
+        <conn-summary id="conn-summary" conn-state="offline" network-online="false"></conn-summary>
+      </div>
+    </settings-section>
+
+    <settings-section icon="baby" title="儿童模式" hint="边界项，独立成组；记忆默认最小化、访客不持久。">
+      <child-mode-panel id="child" memory-enabled="true" night-quiet="true" record-indicator="true"></child-mode-panel>
+    </settings-section>
+
+    <settings-section icon="scan-eye" title="内容审核" hint="审核在合成与播放之前完成，不设「先说出来再撤回」。">
+      <content-review-panel id="review" enabled="true"></content-review-panel>
+      <hr class="hr">
+      <div class="field" style="margin-bottom: var(--space-3)">
+        <rating-select id="rating" value="kid"></rating-select>
+      </div>
+      <content-import-card id="import-card" busy="false"></content-import-card>
+      <div style="margin-top: var(--space-3)">
+        <import-result-list id="import-results"></import-result-list>
+      </div>
+    </settings-section>
+
+    <settings-section icon="settings" title="高级" hint="离线可用性与维护信息。">
+      <div class="stack">
+        <p class="small muted" id="offline-hint">离线是预期状态：本页照常可编辑，仅「保存到本机服务」类动作需要后端可达。
+          请启动 <span class="num">python -m host.main --simulate</span> 后重试。</p>
+        <p class="small muted" id="load-hint">尚未读取到设置，各控件显示默认值（使用默认值不影响设备安全）。</p>
+        <div class="rowflex"><span class="grow"></span>
+          <button class="btn btn--secondary" type="button" id="retry">重试读取设置</button></div>
+      </div>
+    </settings-section>
+
+    <danger-zone id="danger" title="危险区 · 恢复出厂设置">
+      <div class="rowflex">
+        <span class="grow small">会清空记忆、提醒与本地设置，并回到初始角色配置。
+          需要逐字输入 <span class="mono">RESET</span> 并经过 5 秒冷却，冷却期间可取消；关闭弹窗即清零。</span>
+        <button class="btn btn--danger" type="button" id="reset-entry">展开恢复出厂设置</button>
+      </div>
+      <factory-reset-dialog id="reset-dlg"></factory-reset-dialog>
+    </danger-zone>
+
+    <footer class="section xs meta">
+      <hr class="hr">
+      <p>写操作统一携带 request_id；统一信封 <span class="mono">{code, data, message}</span>；非 2xx 一律不进入成功态。</p>
+    </footer>
+  </main>
+
+  <toast-stack></toast-stack>
+  <noscript><p style="padding: var(--space-6)">本界面需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('settings');
+  </script>
+</body>
+</html>

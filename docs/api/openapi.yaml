@@ -1,0 +1,611 @@
+openapi: 3.0.3
+info:
+  title: AI 角色玩具 · 主机管理 API
+  version: 1.0.0
+  description: >
+    树莓派主机（toy/host）的本地管理接口。对接开发书 §13.2 接口设计合同。
+    默认仅绑定 127.0.0.1；开放局域网必须加认证并对写操作防跨站请求（CSRF）。
+    所有响应使用统一信封 {code,data,message}；所有请求至少包含 request_id 以便审计与去重。
+    本文件是前后端唯一契约：前端据此生成类型与 Mock，后端据此实现。
+servers:
+  - url: http://127.0.0.1:8000/api/v1
+    description: 本机（默认，回环）
+tags:
+  - name: status
+    description: 运行状态与故障
+  - name: roles
+    description: 角色注册与切换
+  - name: actions
+    description: 动作校验、播放与停止
+  - name: content
+    description: 本地内容与角色包导入导出
+  - name: memories
+    description: 长期记忆（查看/删除）
+  - name: reminders
+    description: 提醒任务的查询与创建
+  - name: settings
+    description: 音量、语言、网络与配网设置
+  - name: features
+    description: 功能开关（灰度）
+  - name: events
+    description: 实时事件流
+  - name: dev
+    description: 开发模式专用（仅 SIM 档位注册，生产不挂载）
+
+paths:
+  /status:
+    get:
+      tags: [status]
+      summary: 当前角色、网络、动作、故障
+      operationId: getStatus
+      description: 不返回任何密钥、不返回完整记忆内容。
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Status' }
+
+  /roles:
+    get:
+      tags: [roles]
+      summary: 可用角色及配置版本
+      operationId: listRoles
+      responses:
+        '200':
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/RoleSummary' }
+
+  /roles/active:
+    patch:
+      tags: [roles]
+      summary: 切换当前角色
+      operationId: setActiveRole
+      description: >
+        触发换角色流程：取消本轮语音任务 → 停止声音与动作 → 等新编号稳定 →
+        加载并校验角色配置 → 确认安全条件。旧网络请求（generation 不匹配）一律丢弃。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_id, role_id]
+              properties:
+                request_id: { type: string, minLength: 1 }
+                role_id: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: 已切换
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '409':
+          description: 当前状态不允许切换（如正在播放）；见 Envelope.message
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /actions/validate:
+    post:
+      tags: [actions]
+      summary: 只校验，不移动硬件
+      operationId: validateAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActionValidateRequest' }
+      responses:
+        '200':
+          description: 校验结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ActionValidateResult' }
+
+  /actions/play:
+    post:
+      tags: [actions]
+      summary: 当前角色匹配且安全检查成功才播放
+      operationId: playAction
+      description: >
+        第二个播放请求默认拒绝或显式替换，不悄悄叠加两条时间轴。
+        必须附预期 role_id 与动作版本，避免网页缓存把上一角色动作发给新公仔。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActionPlayRequest' }
+      responses:
+        '200':
+          description: 已调度
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ActionPlayResult' }
+        '409':
+          description: 角色不匹配、联锁未通过、或已有播放在进行
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /actions/stop:
+    post:
+      tags: [actions]
+      summary: 立即取消队列并通知 MCU
+      operationId: stopAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_id]
+              properties:
+                request_id: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: 已停止
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /actions/files:
+    get:
+      tags: [actions]
+      summary: 当前角色可编辑的动作文件列表
+      operationId: listActionFiles
+      description: >
+        只读。返回当前角色 actions 目录下的动作文件名与激活指针，
+        供编排器（/editor）填充文件列表；active 为当前编辑/指针所在的文件。
+      responses:
+        '200':
+          description: 动作文件列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ActionFile' }
+
+  /content/import:
+    post:
+      tags: [content]
+      summary: 限大小、路径和签名校验后导入角色包/内容
+      operationId: importContent
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [request_id, file]
+              properties:
+                request_id: { type: string, minLength: 1 }
+                file:
+                  type: string
+                  format: binary
+                  description: rolepack.zip 或内容包；禁止 ../、绝对路径、符号链接与可执行脚本
+      responses:
+        '201':
+          description: 导入成功并原子切换生效目录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '400':
+          description: 校验失败（损坏包、过大、压缩比异常、签名/哈希不符）；失败保留旧版本
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /memories:
+    get:
+      tags: [memories]
+      summary: 查看当前档案记忆
+      operationId: listMemories
+      parameters:
+        - name: profile_id
+          in: query
+          schema: { type: string }
+        - name: kind
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 记忆列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Memory' }
+
+  /memories/{id}:
+    delete:
+      tags: [memories]
+      summary: 删除单条记忆
+      operationId: deleteMemory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: 已删除（同时清理会话缓存与摘要中的对应内容）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /reminders:
+    get:
+      tags: [reminders]
+      summary: 查询提醒
+      operationId: listReminders
+      parameters:
+        - name: profile_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: 提醒列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Reminder' }
+    post:
+      tags: [reminders]
+      summary: 创建持久提醒
+      operationId: createReminder
+      description: 存储 UTC，展示 Asia/Shanghai；模糊时刻必须澄清（返回 422）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReminderCreateRequest' }
+      responses:
+        '201':
+          description: 已创建（仅在数据库事务成功后确认）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Reminder' }
+        '422':
+          description: 时间模糊或超限，需要澄清
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /reminders/{id}:
+    delete:
+      tags: [reminders]
+      summary: 取消提醒
+      operationId: cancelReminder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /settings:
+    get:
+      tags: [settings]
+      summary: 音量、语言、配网设置
+      operationId: getSettings
+      description: 密码类字段一律不回显。
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Settings' }
+    patch:
+      tags: [settings]
+      summary: 修改设置
+      operationId: patchSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsPatch' }
+      responses:
+        '200':
+          description: 已更新（设置持久化到 SQLite）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /features:
+    get:
+      tags: [features]
+      summary: 当前用户的功能开关状态
+      operationId: listFeatures
+      responses:
+        '200':
+          description: 开关映射（key -> enabled） + 当前 AI 后端标识 provider
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Features' }
+
+  /events:
+    get:
+      tags: [events]
+      summary: 实时状态与故障事件流（WebSocket）
+      operationId: eventsStream
+      description: >
+        升级为 WebSocket。服务端以 CoreEvent 推送状态迁移、故障、按键、动作进度。
+        鉴权经查询参数 ticket 或同源 Cookie（开放局域网时强制）。
+      responses:
+        '101':
+          description: Switching Protocols
+        '401':
+          description: 未授权
+
+components:
+  schemas:
+    Envelope:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          description: 0=成功；非 0=错误码（见下方错误码约定）
+        message:
+          type: string
+          description: 错误时的人类可读描述；成功时为空串
+
+    Status:
+      type: object
+      required: [state, mcu_armed, docked, estop_healthy, role_id, session_generation, network_online]
+      properties:
+        state:
+          type: string
+          enum: [SELF_TEST, IDLE, RECORDING, THINKING, SPEAKING, PERFORMING, FAULT_LOCKED]
+        mcu_armed: { type: boolean }
+        docked: { type: boolean }
+        estop_healthy: { type: boolean }
+        role_id: { type: integer }
+        session_generation: { type: integer, description: 换角色/取消轮次时递增 }
+        network_online: { type: boolean }
+        fault:
+          allOf: [{ $ref: '#/components/schemas/Fault' }]
+          nullable: true
+        action:
+          nullable: true
+          type: object
+          properties:
+            action_id: { type: string }
+            seq: { type: integer }
+            progress_ms: { type: integer }
+
+    Fault:
+      type: object
+      required: [code, detail]
+      properties:
+        code:
+          type: string
+          enum: [INTERLOCK, TIMEOUT, PWM_INIT, SAFETY_TRIP, PROVIDER, STORAGE]
+        detail: { type: string }
+
+    RoleSummary:
+      type: object
+      required: [role_id, name, config_version]
+      properties:
+        role_id: { type: integer }
+        name: { type: string }
+        config_version: { type: string }
+        tts_voice: { type: string }
+        language: { type: string, enum: [Auto, zh, en] }
+
+    ActionValidateRequest:
+      type: object
+      required: [request_id, action]
+      properties:
+        request_id: { type: string }
+        action: { $ref: '#/components/schemas/ActionDoc' }
+
+    ActionValidateResult:
+      type: object
+      required: [valid]
+      properties:
+        valid: { type: boolean }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }
+
+    ActionPlayRequest:
+      type: object
+      required: [request_id, role_id, action_id]
+      properties:
+        request_id: { type: string }
+        role_id:
+          type: integer
+          description: 预期角色编号；与当前角色不符则拒绝（防网页缓存串角色）
+        action_id:
+          type: string
+          description: 当前角色动作白名单中的动作 ID（非文件路径）
+        action_version: { type: string }
+        replace_current:
+          type: boolean
+          default: false
+          description: true 显式替换当前播放，false 时若正在播放则拒绝
+
+    ActionPlayResult:
+      type: object
+      required: [scheduled, action_id]
+      properties:
+        scheduled: { type: boolean }
+        action_id: { type: string }
+        seq: { type: integer, description: 首个 FRAME 序号 }
+
+    ActionDoc:
+      type: object
+      required: [schema, role_id, frames]
+      properties:
+        schema: { type: integer, enum: [1] }
+        role_id: { type: integer, minimum: 1, maximum: 3 }
+        name: { type: string }
+        axes:
+          type: array
+          items: { type: string }
+          minItems: 4
+          maxItems: 4
+        frames:
+          type: array
+          minItems: 2
+          maxItems: 1000
+          items:
+            type: object
+            required: [t_ms, us]
+            properties:
+              t_ms: { type: integer, minimum: 0, maximum: 60000 }
+              us:
+                type: array
+                minItems: 4
+                maxItems: 4
+                items: { type: number, minimum: 1400, maximum: 1600 }
+
+    ActionFile:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: 动作文件名（不含扩展名） }
+        active: { type: boolean, description: 是否为当前编辑指针所在文件 }
+
+    Features:
+      type: object
+      description: 功能开关映射；provider 为当前 AI 后端标识（桩 / 真实云端）。
+      required: [memory, child_mode, sim_mode, provider]
+      properties:
+        memory: { type: boolean }
+        child_mode: { type: boolean }
+        night_mode: { type: boolean }
+        mute: { type: boolean }
+        sim_mode: { type: boolean }
+        provider: { type: string, enum: [stub, qwen] }
+
+    Memory:
+      type: object
+      required: [id, profile_id, kind, value, confirmed, created_at]
+      properties:
+        id: { type: integer }
+        profile_id: { type: string }
+        kind: { type: string }
+        value: { type: string }
+        confirmed: { type: boolean }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, nullable: true }
+
+    Reminder:
+      type: object
+      required: [id, profile_id, text, due_at_utc, timezone, status]
+      properties:
+        id: { type: string }
+        profile_id: { type: string }
+        text: { type: string }
+        due_at_utc: { type: string, format: date-time }
+        timezone: { type: string, example: Asia/Shanghai }
+        repeat_rule: { type: string, nullable: true }
+        status: { type: string, enum: [pending, fired, missed, cancelled] }
+        last_fired_at: { type: string, format: date-time, nullable: true }
+        idempotency_key: { type: string }
+
+    ReminderCreateRequest:
+      type: object
+      required: [request_id, profile_id, text, due_at_utc, timezone]
+      properties:
+        request_id: { type: string }
+        profile_id: { type: string }
+        text: { type: string, maxLength: 200 }
+        due_at_utc: { type: string, format: date-time }
+        timezone: { type: string, default: Asia/Shanghai }
+        repeat_rule: { type: string, nullable: true }
+        idempotency_key: { type: string }
+
+    Settings:
+      type: object
+      properties:
+        volume_level: { type: string, enum: [low, mid, high] }
+        language: { type: string, enum: [Auto, zh, en] }
+        memory_enabled: { type: boolean }
+        content_rating_max: { type: string }
+        wifi_ssid: { type: string, description: 仅回显 SSID，不回显密码 }
+        sim_mode: { type: boolean, description: 无硬件档位是否启用 }
+
+    SettingsPatch:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+        volume_level: { type: string, enum: [low, mid, high] }
+        language: { type: string, enum: [Auto, zh, en] }
+        memory_enabled: { type: boolean }
+        content_rating_max: { type: string }
+
+  responses:
+    ErrorEnvelope:
+      description: 统一错误信封
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }

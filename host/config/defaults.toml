@@ -1,0 +1,27 @@
+# 主机默认配置（唯一默认值落点）。环境变量优先级高于本文件。
+# 业务代码不得再硬编码这些值；改默认只改本文件。
+
+[motion]
+# 串口来源：COM5 / /dev/serial/by-id/... / socket://127.0.0.1:5555（模拟器）
+port = "socket://127.0.0.1:5555"
+baudrate = 115200
+read_timeout_s = 0.02
+write_timeout_s = 0.2
+boot_wait_s = 2.0
+
+[ai]
+# stub = 确定性桩后端（零网络出口）；qwen = 真实百炼 REST
+provider = "stub"
+
+[web]
+host = "127.0.0.1"
+port = 8000
+
+[storage]
+path = "data/toy.sqlite3"
+
+[cors]
+origins = ["http://127.0.0.1:8000", "http://localhost:8000"]
+
+[logging]
+level = "INFO"

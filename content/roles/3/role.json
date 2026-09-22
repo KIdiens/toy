@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "role_id": 3,
+  "name": "小云",
+  "config_version": "1.0.0",
+  "min_us": 1430,
+  "max_us": 1570,
+  "neutral_us": 1500,
+  "axes": ["左臂", "右臂", "头部左右", "腰部左右"],
+  "tts_voice": "Serena",
+  "language": "zh",
+  "actions": ["nod"]
+}

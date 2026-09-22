@@ -1,0 +1,164 @@
+{
+  "$schema": "https://design-tokens.org/schema.json",
+  "name": "toy-host-web",
+  "version": "1.1.0",
+  "description": "可换公仔 AI 语音动作玩具 · 主机管理界面 Design Tokens（编排器 + 管理页）。前端通过 import tokens from './design-tokens.json' 引用。color.domain 按 light/dark 分组，与 design-tokens.css 两个主题块逐项一致。",
+  "font": {
+    "family": {
+      "display": { "value": "'Lexend', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif", "type": "fontFamily", "note": "self-host 优先；缺失时回退 Noto Sans SC / 系统中文字体" },
+      "body":    { "value": "'Figtree', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif", "type": "fontFamily", "note": "self-host 优先；缺失时回退" },
+      "mono":    { "value": "'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, 'Noto Sans SC', ui-monospace, monospace", "type": "fontFamily", "note": "回退链为等宽优先，保证 µs 数值列对齐" }
+    },
+    "weight": {
+      "read":      { "value": 400, "type": "fontWeight" },
+      "emphasize": { "value": 500, "type": "fontWeight" },
+      "announce":  { "value": 600, "type": "fontWeight" }
+    },
+    "size": {
+      "xs":   { "value": "0.75rem",   "type": "dimension" },
+      "sm":   { "value": "0.8125rem", "type": "dimension" },
+      "base": { "value": "0.9375rem", "type": "dimension" },
+      "md":   { "value": "1rem",      "type": "dimension" },
+      "lg":   { "value": "1.125rem",  "type": "dimension" },
+      "xl":   { "value": "1.375rem",  "type": "dimension" },
+      "2xl":  { "value": "1.75rem",   "type": "dimension" },
+      "3xl":  { "value": "2.125rem",  "type": "dimension" }
+    },
+    "leading": {
+      "display": { "value": 1.15, "type": "number" },
+      "tight":   { "value": 1.25, "type": "number" },
+      "body":    { "value": 1.6,  "type": "number" }
+    },
+    "tracking": {
+      "display": { "value": "-0.02em", "type": "dimension" },
+      "caps":    { "value": "0.07em",  "type": "dimension" },
+      "body":    { "value": "0",       "type": "dimension" }
+    }
+  },
+  "color": {
+    "light": {
+      "bg":            { "value": "#F6F8F7", "type": "color" },
+      "surface":       { "value": "#FFFFFF", "type": "color" },
+      "surface-warm":  { "value": "#EDF1F0", "type": "color" },
+      "fg":            { "value": "#14201E", "type": "color" },
+      "fg-2":          { "value": "#33403D", "type": "color" },
+      "muted":         { "value": "#556663", "type": "color" },
+      "meta":          { "value": "#8A9793", "type": "color" },
+      "border":        { "value": "#DDE4E2", "type": "color" },
+      "border-soft":   { "value": "#EAEFED", "type": "color" },
+      "accent":        { "value": "#0F766E", "type": "color" },
+      "accent-on":     { "value": "#FFFFFF", "type": "color" },
+      "accent-hover":  { "value": "#0D6259", "type": "color" },
+      "accent-active": { "value": "#0A4F48", "type": "color" },
+      "accent-soft":   { "value": "#E4F1EF", "type": "color" },
+      "success":       { "value": "#15803D", "type": "color" },
+      "warn":          { "value": "#B45309", "type": "color" },
+      "danger":        { "value": "#B91C1C", "type": "color" },
+      "info":          { "value": "#0E7490", "type": "color" }
+    },
+    "dark": {
+      "bg":           { "value": "#0C1211", "type": "color" },
+      "surface":      { "value": "#121A18", "type": "color" },
+      "surface-2":    { "value": "#19231F", "type": "color" },
+      "surface-3":    { "value": "#212E2A", "type": "color" },
+      "surface-warm": { "value": "#19231F", "type": "color" },
+      "fg":           { "value": "#EAF1EF", "type": "color" },
+      "fg-2":         { "value": "#C7D5D1", "type": "color" },
+      "muted":        { "value": "#9DB0AB", "type": "color" },
+      "meta":         { "value": "#6B7C78", "type": "color" },
+      "border":       { "value": "rgba(255,255,255,0.08)", "type": "color" },
+      "border-soft":  { "value": "rgba(255,255,255,0.05)", "type": "color" },
+      "accent":       { "value": "#14B8A6", "type": "color" },
+      "accent-on":    { "value": "#04211D", "type": "color" },
+      "accent-hover": { "value": "#2DD4BF", "type": "color" },
+      "accent-active":{ "value": "#5EEAD4", "type": "color" },
+      "accent-soft":  { "value": "rgba(20,184,166,0.14)", "type": "color" },
+      "success":      { "value": "#34D399", "type": "color" },
+      "warn":         { "value": "#FBBF24", "type": "color" },
+      "danger":       { "value": "#F87171", "type": "color" },
+      "info":         { "value": "#22D3EE", "type": "color" }
+    },
+    "domain": {
+      "light": {
+        "limit-track":        { "value": "#E8ECEB", "type": "color" },
+        "limit-normal":       { "value": "#15803D", "type": "color" },
+        "limit-near":         { "value": "#D97706", "type": "color" },
+        "limit-at":           { "value": "#DC2626", "type": "color" },
+        "limit-neutral-mark": { "value": "#64748B", "type": "color" },
+        "playhead":           { "value": "#B45309", "type": "color" },
+        "conn-offline":       { "value": "#8A9793", "type": "color" },
+        "conn-online":        { "value": "#15803D", "type": "color" },
+        "conn-active":        { "value": "#0E7490", "type": "color" },
+        "conn-fault":         { "value": "#B91C1C", "type": "color" },
+        "track-1":            { "value": "#2563EB", "type": "color", "axis": "左臂" },
+        "track-2":            { "value": "#0E7490", "type": "color", "axis": "右臂" },
+        "track-3":            { "value": "#B45309", "type": "color", "axis": "头部左右" },
+        "track-4":            { "value": "#7C3AED", "type": "color", "axis": "腰部左右" }
+      },
+      "dark": {
+        "limit-track":        { "value": "#1E2A26", "type": "color" },
+        "limit-normal":       { "value": "#34D399", "type": "color" },
+        "limit-near":         { "value": "#FBBF24", "type": "color" },
+        "limit-at":           { "value": "#F87171", "type": "color" },
+        "limit-neutral-mark": { "value": "#94A3B8", "type": "color" },
+        "playhead":           { "value": "#F59E0B", "type": "color" },
+        "conn-offline":       { "value": "#6B7C78", "type": "color" },
+        "conn-online":        { "value": "#34D399", "type": "color" },
+        "conn-active":        { "value": "#22D3EE", "type": "color" },
+        "conn-fault":         { "value": "#F87171", "type": "color" },
+        "track-1":            { "value": "#60A5FA", "type": "color", "axis": "左臂" },
+        "track-2":            { "value": "#22D3EE", "type": "color", "axis": "右臂" },
+        "track-3":            { "value": "#F59E0B", "type": "color", "axis": "头部左右" },
+        "track-4":            { "value": "#A78BFA", "type": "color", "axis": "腰部左右" }
+      }
+    }
+  },
+  "space": {
+    "1":  { "value": "4px",  "type": "dimension" },
+    "2":  { "value": "8px",  "type": "dimension" },
+    "3":  { "value": "12px", "type": "dimension" },
+    "4":  { "value": "16px", "type": "dimension" },
+    "5":  { "value": "20px", "type": "dimension" },
+    "6":  { "value": "24px", "type": "dimension" },
+    "8":  { "value": "32px", "type": "dimension" },
+    "10": { "value": "40px", "type": "dimension" },
+    "12": { "value": "48px", "type": "dimension" },
+    "16": { "value": "64px", "type": "dimension" }
+  },
+  "radius": {
+    "sm":   { "value": "6px",    "type": "dimension" },
+    "md":   { "value": "10px",   "type": "dimension" },
+    "lg":   { "value": "14px",   "type": "dimension" },
+    "pill": { "value": "9999px", "type": "dimension" }
+  },
+  "shadow": {
+    "flat":   { "value": "none", "type": "boxShadow" },
+    "ring":   { "value": "0 0 0 1px var(--border)", "type": "boxShadow" },
+    "raised": { "value": "0 1px 2px rgba(0,0,0,0.05), 0 8px 24px -8px rgba(0,0,0,0.12)", "type": "boxShadow" },
+    "focus":  { "value": "0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent)", "type": "boxShadow" }
+  },
+  "motion": {
+    "fast": { "value": "120ms", "type": "duration" },
+    "base": { "value": "180ms", "type": "duration" },
+    "slow": { "value": "260ms", "type": "duration" },
+    "ease": { "value": "cubic-bezier(0.2, 0, 0, 1)", "type": "cubicBezier" }
+  },
+  "layout": {
+    "containerMax":  { "value": "1440px", "type": "dimension" },
+    "containerRead": { "value": "720px",  "type": "dimension" },
+    "railLeft":      { "value": "260px",  "type": "dimension" },
+    "railRight":     { "value": "300px",  "type": "dimension" },
+    "topbarH":       { "value": "56px",   "type": "dimension" },
+    "touchMin":      { "value": "44px",   "type": "dimension" }
+  },
+  "icon": {
+    "library": { "value": "lucide", "type": "string", "license": "ISC" },
+    "strokeWidth": { "value": 2, "at16px": 1.75, "type": "number" },
+    "sizes": { "inline": "16px", "button": "20px", "standalone": "24px" }
+  },
+  "scale": {
+    "DESIGN_VARIANCE": 3,
+    "MOTION_INTENSITY": 3,
+    "VISUAL_DENSITY": 7
+  }
+}

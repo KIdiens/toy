@@ -1,0 +1,7 @@
+{"session": "toy-session-v1", "controller_args": {}, "end_ms": 320}
+{"t_ms": 300, "dir": "host", "line": "ARM 1"}
+{"t_ms": 320, "dir": "host", "line": "ARM 1"}
+{"t_ms": 0, "dir": "mcu", "line": "READY 1"}
+{"t_ms": 200, "dir": "mcu", "line": "STATE 0 1 1 0"}
+{"t_ms": 300, "dir": "mcu", "line": "OK ARM 1"}
+{"t_ms": 320, "dir": "mcu", "line": "ERR ALREADY_ARMED"}

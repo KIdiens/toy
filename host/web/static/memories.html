@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记忆管理 · 玩具主机</title>
+  <meta name="description" content="查看与删除玩具记住的对话内容：只保存文字、不保存原始录音，删除后新会话不再注入。">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <app-topbar active="memories">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+  </app-topbar>
+
+  <main class="read" id="main">
+    <page-header icon="brain" title="记忆管理"
+      subtitle="玩具在当前档案下记住的长期事实。它只用于让孩子下次被「认出来」，不参与任何安全判断。"></page-header>
+
+    <privacy-note tone="info">这些是玩具记住的关于你们的对话。删除后它不会再提起；这里只显示文字，<strong>不保存原始录音</strong>。</privacy-note>
+
+    <div style="margin: var(--space-5) 0">
+      <device-banner id="source" mode="offlineData" class="hidden"></device-banner>
+    </div>
+
+    <div class="rowflex" style="margin-bottom: var(--space-4)">
+      <search-field id="search" placeholder="搜索记忆内容"></search-field>
+      <kind-filter id="filter" selected=""></kind-filter>
+      <memory-toggle id="mem-toggle" enabled="true"></memory-toggle>
+    </div>
+
+    <memory-list id="list" busy="true"></memory-list>
+    <div id="empty-slot"></div>
+
+    <section class="section" style="margin-top: var(--space-10)">
+      <div class="card" style="border-color: var(--danger)">
+        <div class="rowflex">
+          <span class="grow small">清空全部记忆会移除所有已确认事实，且<strong>不可恢复</strong>。
+            清空后新会话不再注入这些内容，含短期历史与摘要缓存。</span>
+          <button class="btn btn--danger" type="button" id="clear-all">清空全部记忆</button>
+        </div>
+      </div>
+      <clear-all-dialog id="clear-dlg"></clear-all-dialog>
+    </section>
+
+    <footer class="section xs meta">
+      <hr class="hr">
+      <p id="count">共 0 条记忆</p>
+      <div class="rowflex">
+        <span>删除失败时列表不会变化，避免「看着删了其实没删」。</span>
+        <span class="grow"></span>
+        <button class="btn btn--ghost" type="button" id="retry">重试读取</button>
+      </div>
+    </footer>
+  </main>
+
+  <toast-stack></toast-stack>
+  <noscript><p style="padding: var(--space-6)">本界面需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('memories');
+  </script>
+</body>
+</html>

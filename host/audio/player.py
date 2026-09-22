@@ -1,0 +1,72 @@
+"""播放器：三档音量、播放进度、停止（与 ``Recorder`` 共享后端构成半双工）。
+
+- 音量三档 ``low/mid/high``（§7.1.1 音量键），映射到 0..1 的线性系数；音量值真源在本模块，
+  状态机只负责「按当前状态路由音量意图」。
+- ``play`` 立即返回时长（真实后端内部阻塞到播完；空后端零等待）。
+- ``stop`` 可被录音请求打断：``Recorder.record`` 会先调用本类的 ``stop``（AC-21）。
+"""
+from __future__ import annotations
+
+from host.audio.backend import DEFAULT_SAMPLE_RATE
+
+VOLUME_LEVELS: dict[str, float] = {"low": 0.3, "mid": 0.6, "high": 1.0}
+LEVEL_ORDER: tuple[str, ...] = ("low", "mid", "high")
+
+
+class Player:
+    """在共享后端上串行化播放；维护音量档位与播放进度。"""
+
+    def __init__(self, backend, *, level: str = "mid", clock=None) -> None:
+        if level not in VOLUME_LEVELS:
+            raise ValueError(f"未知音量档位: {level}")
+        self.backend = backend
+        self.clock = clock
+        self._level = level
+        self.playing = False
+        self.progress_ms = 0
+        self.total_ms = 0
+        self.last_played_ms = 0
+
+    @property
+    def level(self) -> str:
+        return self._level
+
+    @property
+    def volume(self) -> float:
+        return VOLUME_LEVELS[self._level]
+
+    def set_level(self, level: str) -> str:
+        if level not in VOLUME_LEVELS:
+            raise ValueError(f"未知音量档位: {level}")
+        self._level = level
+        return self._level
+
+    def cycle_level(self) -> str:
+        """低→中→高→低（音量键的内部迁移）。"""
+        index = LEVEL_ORDER.index(self._level)
+        return self.set_level(LEVEL_ORDER[(index + 1) % len(LEVEL_ORDER)])
+
+    def play(self, clip, *, sample_rate: int | None = None) -> int:
+        """播放片段，返回时长毫秒。真实后端内部阻塞；空后端立即返回。"""
+        self.backend.open()
+        duration = int(float(getattr(clip, "duration_s", 0.0)) * 1000)
+        self.total_ms = duration
+        self.progress_ms = 0
+        self.playing = True
+        self.backend.play(clip, volume=self.volume)
+        self.playing = False
+        self.progress_ms = duration
+        self.last_played_ms = duration
+        return duration
+
+    def stop(self) -> None:
+        self.backend.stop()
+        self.playing = False
+        self.progress_ms = 0
+
+    def progress(self) -> dict[str, int]:
+        return {"played_ms": self.progress_ms, "total_ms": self.total_ms}
+
+
+def default_sample_rate() -> int:
+    return DEFAULT_SAMPLE_RATE
