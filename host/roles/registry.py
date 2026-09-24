@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from host.core.errors import ConfigError
+from host.roles.rolepack import RESIDUE_SUFFIXES
 from host.roles.schema import RoleConfig
 
 ROLE_JSON = "role.json"
@@ -36,6 +37,12 @@ class RoleRegistry:
             self._active = None
             return []
         for directory in sorted(p for p in self.root.iterdir() if p.is_dir()):
+            if directory.name.endswith(RESIDUE_SUFFIXES) or directory.name.startswith("."):
+                # 导入中途崩溃/回收失败会留下 `<role>.bak` / `<role>.incoming`。它们是残留
+                # 而非角色：被当作角色加载会让同一 role_id 出现两个来源 → register 抛
+                # ConfigError → **整个 load_all 失败、服务起不来**；版本号相同时更糟——
+                # 服务正常起来但静默加载了错误配置。跳过它们同时也是对历史残留的自愈。
+                continue
             config_path = directory / ROLE_JSON
             if not config_path.is_file():
                 continue

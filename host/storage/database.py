@@ -79,7 +79,12 @@ class Database:
         统一转换保证存储层不向外泄漏裸 ``sqlite3.Error``（上层只需捕获 StorageError 家族）。
         """
         con = self.connect()
-        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute("BEGIN IMMEDIATE")
+        except sqlite3.Error as exc:
+            # BEGIN 也会失败（写锁冲突 → `database is locked`，实测要等满 busy_timeout）。
+            # 它必须在 try 内，否则裸 OperationalError 会绕过下面的 translate 直接冒到上层。
+            raise translate(exc) from exc
         try:
             yield con
         except Exception as exc:
@@ -89,7 +94,13 @@ class Database:
                 raise translate(exc) from exc
             raise
         else:
-            con.execute("COMMIT")
+            try:
+                con.execute("COMMIT")
+            except sqlite3.Error as exc:
+                # COMMIT 失败必须回滚：否则连接会停在未知事务态，后续 BEGIN 继续报错。
+                with contextlib.suppress(sqlite3.Error):
+                    con.execute("ROLLBACK")
+                raise translate(exc) from exc
 
     # ---------- 迁移 ----------
     @property

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -41,6 +42,7 @@ from host.web.routers import (
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_PREFIX = "/api/v1"
+logger = logging.getLogger("host.web.app")
 PAGE_ROUTES: dict[str, str] = {
     "/": "index.html",
     "/editor": "editor.html",
@@ -96,6 +98,16 @@ def _register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HostError)
     async def _on_host_error(_request, exc: HostError) -> JSONResponse:
         return JSONResponse(status_code=500, content=schemas.error(50000, str(exc)))
+
+    @app.exception_handler(Exception)
+    async def _on_unexpected(_request, exc: Exception) -> JSONResponse:
+        """未预期异常的兜底：仍走统一信封，绝不漏成纯文本 500（SPEC §5）。
+
+        响应体只给通用文案，**不外泄堆栈、文件路径、异常类名**；但日志必须
+        ``log.exception`` 记全量堆栈 —— 可诊断性不能拿来换「安全」，禁止用吞异常掩盖根因。
+        """
+        logger.exception("未处理异常（已转统一信封 50000）: %s", exc)
+        return JSONResponse(status_code=500, content=schemas.error(50000, "服务内部错误"))
 
 
 def _describe(exc: RequestValidationError) -> str:

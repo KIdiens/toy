@@ -18,6 +18,21 @@ DEFAULT_TIMEZONE = "Asia/Shanghai"
 # 前端与契约用 ``"default"`` 指代默认档案（见 host/web/static/pages/reminders.js）。
 DEFAULT_PROFILE_ALIASES = frozenset({"default", "me", "self", "current"})
 
+# SQLite 的 INTEGER 是 64 位有符号。越界整数会在驱动层抛**裸** ``OverflowError``
+# （实测 19 位十进制数字即可触发）→ 纯文本 500，违反统一信封契约。
+SQLITE_MAX_INT = 2**63 - 1
+
+
+def _checked_id(raw: object, *, what: str) -> int:
+    """把外部传入的编号安全转成 SQLite 可表示的整数；非法/越界一律转 422。"""
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ClarifyError(f"非法{what}: {raw!r}") from exc
+    if not (-SQLITE_MAX_INT - 1) <= value <= SQLITE_MAX_INT:
+        raise ClarifyError(f"{what}超出可表示范围: {raw!r}")
+    return value
+
 
 class StorageFacade:
     """依赖宿主提供 ``db`` / ``clock`` / ``simulate`` / ``player``。"""
@@ -28,10 +43,7 @@ class StorageFacade:
         text = str(profile_id).strip()
         if text.lower() in DEFAULT_PROFILE_ALIASES:
             return self.ensure_profile()
-        try:
-            return int(text)
-        except (TypeError, ValueError) as exc:
-            raise ClarifyError(f"非法档案编号: {profile_id}") from exc
+        return _checked_id(text, what="档案编号")
 
     def ensure_profile(self) -> int:
         existing = profiles_repo.list_all(self.db)
@@ -46,8 +58,9 @@ class StorageFacade:
         rows = memories_repo.list_by_profile(self.db, pid, kind=kind, include_expired=True)
         return [dto.memory_dto(m) for m in rows]
 
-    def delete_memory(self, memory_id: int) -> dict[str, Any]:
-        return {"deleted": memories_repo.delete(self.db, int(memory_id))}
+    def delete_memory(self, memory_id: str | int) -> dict[str, Any]:
+        mid = _checked_id(memory_id, what="记忆编号")
+        return {"deleted": memories_repo.delete(self.db, mid)}
 
     def clear_memories(self, *, profile_id: str | int | None = None) -> dict[str, Any]:
         pid = self._resolve_profile(profile_id)
@@ -71,35 +84,41 @@ class StorageFacade:
 
     def create_reminder(self, payload: dict[str, Any]) -> dict[str, Any]:
         pid = self._resolve_profile(payload.get("profile_id"))
-        result = reminder_tool.create(
-            self.db,
-            text=str(payload["text"]),
-            due_at_utc=str(payload["due_at_utc"]),
-            now=self.clock.now_iso(),
-            timezone=str(payload.get("timezone") or DEFAULT_TIMEZONE),
-            profile_id=pid,
-            repeat_rule=payload.get("repeat_rule"),
-            idempotency_key=payload.get("idempotency_key"),
-        )
+        idempotency_key = payload.get("idempotency_key")
+        try:
+            result = reminder_tool.create(
+                self.db,
+                text=str(payload["text"]),
+                due_at_utc=str(payload["due_at_utc"]),
+                now=self.clock.now_iso(),
+                timezone=str(payload.get("timezone") or DEFAULT_TIMEZONE),
+                profile_id=pid,
+                repeat_rule=payload.get("repeat_rule"),
+                idempotency_key=idempotency_key,
+            )
+        except ValueError as exc:
+            # `_normalize_due` 对非法时间抛裸 ValueError。这里转成 422 契约错误，
+            # 而不是让它冒泡成纯文本 500。
+            raise ClarifyError(f"提醒时间非法: {payload.get('due_at_utc')!r}（{exc}）") from exc
         if result.get("id"):
             return dto.reminder_dto(reminders_repo.get(self.db, result["id"]))
-        existing = reminders_repo.list_by_profile(self.db, pid)
-        if existing:
-            return dto.reminder_dto(existing[-1])
+        # 幂等冲突：**只能**按幂等键取回同一条记录。绝不用「列表最后一条」冒充——
+        # 那会把别人的提醒当成重放结果返回给客户端。
+        if idempotency_key:
+            existing = reminders_repo.get_by_idempotency_key(self.db, str(idempotency_key))
+            if existing is not None:
+                return dto.reminder_dto(existing)
         # 幂等冲突却找不到既有记录：属于真实的数据不一致，如实抛出而非伪造结果
         raise HostError("提醒创建未生效：幂等键冲突但未找到既有记录")
 
-    def cancel_reminder(self, reminder_id: str) -> dict[str, Any]:
-        try:
-            return {"cancelled": reminders_repo.cancel(self.db, int(reminder_id))}
-        except (TypeError, ValueError) as exc:
-            raise ClarifyError(f"非法提醒编号: {reminder_id}") from exc
+    def cancel_reminder(self, reminder_id: str | int) -> dict[str, Any]:
+        rid = _checked_id(reminder_id, what="提醒编号")
+        return {"cancelled": reminders_repo.cancel(self.db, rid)}
 
-    def get_reminder(self, reminder_id: str) -> dict[str, Any]:
+    def get_reminder(self, reminder_id: str | int) -> dict[str, Any]:
+        rid = _checked_id(reminder_id, what="提醒编号")
         try:
-            return dto.reminder_dto(reminders_repo.get(self.db, int(reminder_id)))
-        except (TypeError, ValueError) as exc:
-            raise ClarifyError(f"非法提醒编号: {reminder_id}") from exc
+            return dto.reminder_dto(reminders_repo.get(self.db, rid))
         except RecordNotFound as exc:
             raise ClarifyError(f"提醒不存在: {reminder_id}") from exc
 

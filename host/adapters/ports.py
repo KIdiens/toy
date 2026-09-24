@@ -20,7 +20,7 @@ from host.adapters.injection import InjectionMixin
 from host.adapters.services import StorageFacade
 from host.adapters.workers import WorkersMixin
 from host.core.engine import Engine
-from host.core.errors import ConflictError, StorageError
+from host.core.errors import ConflictError, HostError, StorageError
 from host.core.events import CommandKind
 from host.core.state_machine import SessionStateMachine, State, Trigger
 from host.motion.client import MotionClient, PlayResult
@@ -76,6 +76,7 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     _last_recording_gen: int = -1
     _rec_started_gen: int = -1
     _thinking_since_ms: int | None = None
+    _recording_since_ms: int | None = None
 
     # ---------- 状态快照 ----------
     def _mcu_snapshot(self) -> dict[str, Any]:
@@ -156,11 +157,24 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                         "已有动作在播放，默认拒绝叠加（可用 replace_current 显式替换）"
                     )
                 self.stop_action()
+            # **先预判、再动手**：`PERFORM_PRESS` 在 SPEAKING / RECORDING 下也是合法迁移
+            # （都指向 IDLE），若直接 apply 会真的打断说话或取消录音，随后才因拿不到
+            # PLAY_ACTION 命令抛 409 —— 于是「拒绝」变成了「拒绝 + 已经改了状态」。
+            landing = self.state_machine.destination(Trigger.PERFORM_PRESS)
+            if landing is not State.PERFORMING:
+                raise ConflictError(
+                    f"当前状态 {self.state_machine.state.value} 不接受播放指令"
+                )
             path = self.roles.action_path(active, action_id)
             if path is None:
                 raise ConflictError(f"动作文件不存在: {action_id}")
             action = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.validate_action(action)
+            verdict = self.validate_action(action)
+            if not verdict["valid"]:
+                # 动作文件非法必须在**入口**拒绝。否则会一路下发到 `MotionClient.play` 的
+                # `validate()` 抛错，被 `_run_play` 归类为 SAFETY_TRIP → 设备直接进故障锁定，
+                # 「文件写错了」的表现变成「玩具坏了、要人工解除」。
+                raise ConflictError(f"动作文件非法: {verdict['errors']}")
             self.roles.set_current_action(action_id)
             commands = self.engine.apply(
                 Trigger.PERFORM_PRESS,
@@ -169,7 +183,9 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
             self._deliver(commands)
             self.motion_busy = any(c.kind is CommandKind.PLAY_ACTION for c in commands)
             if not self.motion_busy:
-                raise ConflictError("当前状态不接受播放指令")
+                # 预判已保证目标态是 PERFORMING、必然下发 PLAY_ACTION。走到这里说明
+                # 预判与命令表不一致（装配问题），如实抛出而不是伪装成 409。
+                raise HostError("装配异常：预判可播放，但未下发 PLAY_ACTION 命令")
             self.action_progress = {"action_id": action_id, "seq": 0, "progress_ms": 0}
             return {"scheduled": True, "action_id": action_id, "seq": 0}
 

@@ -18,6 +18,7 @@ from host.ai.providers import (
     AsrProvider,
     AudioClip,
     LlmProvider,
+    LlmReply,
     Message,
     TtsProvider,
 )
@@ -85,13 +86,15 @@ class AiRouter:
                                   lang=lang)
 
         messages = self._build_messages(user_text)
-        reply = self.llm.complete(messages, tools=self.registry.specs())
-        used, rejected = self._run_tools(reply, messages)
+        first = self.llm.complete(messages, tools=self.registry.specs())
+        final, used, rejected = self._run_tools(first, messages)
         if rejected:
             return self._finalize(user_text, safety.CANNOT_FABRICATE_TEMPLATE, blocked=True,
                                   reason="工具参数非法，本地拒绝", tool_rejected=tuple(rejected),
                                   lang=lang)
-        return self._finalize(user_text, reply.text, tool_calls=tuple(used), lang=lang)
+        # 必须用**工具回合之后**的最终答复：模型发工具调用时第一轮 text 通常为空，
+        # 若沿用第一轮文本，工具结果永远到不了用户嘴里（会被输出审核当成「空输出」拦掉）。
+        return self._finalize(user_text, final.text, tool_calls=tuple(used), lang=lang)
 
     # ---------- 内部 ----------
     def _build_messages(self, user_text: str) -> list[Message]:
@@ -105,7 +108,14 @@ class AiRouter:
         messages.append(Message("user", user_text))
         return messages
 
-    def _run_tools(self, reply, messages: list[Message]) -> tuple[list[str], list[str]]:
+    def _run_tools(self, reply: LlmReply, messages: list[Message]
+                   ) -> tuple[LlmReply, list[str], list[str]]:
+        """执行工具回合，返回 ``(最终回复, 已执行工具, 被拒工具)``。
+
+        返回**最终回复**是这一段的关键：早前版本只返回 ``used/rejected``，把工具回合之后
+        重新生成的答复丢在函数里（`reply = current` 是死赋值），于是工具调用的结果永远
+        到不了用户——天气/提醒/内容三个工具在真实模型档位整体失效。
+        """
         used: list[str] = []
         rejected: list[str] = []
         current = reply
@@ -126,8 +136,7 @@ class AiRouter:
             if rejected:
                 break
             current = self.llm.complete(messages, tools=self.registry.specs())
-            reply = current
-        return used, rejected
+        return current, used, rejected
 
     def _finalize(
         self,

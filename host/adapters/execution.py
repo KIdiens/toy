@@ -62,6 +62,13 @@ class ExecutionMixin:
         if command is None:
             return False
         if command.kind is CommandKind.PLAY_ACTION:
+            if not command.payload.get("action"):
+                # 物理表演键下发的 PLAY_ACTION **不携带动作载荷**（按键路径没有「选动作」这一步），
+                # 按 `_finish_without_motion` 的既定语义直接收尾回 IDLE。
+                # **绝不能走下面的 motion_busy 守卫**：按键路径从不置 motion_busy，走守卫会被
+                # 当作陈旧命令丢弃 → `PERFORM_DONE` 永不产生 → 设备永久卡在 PERFORMING。
+                self._run_play(command)
+                return True
             with self._lock:
                 if not self.motion_busy:
                     return True  # 已被 stop/替换：丢弃陈旧运动命令，不移动硬件

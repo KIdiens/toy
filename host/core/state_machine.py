@@ -192,6 +192,20 @@ class SessionStateMachine:
             return guard(context or {})
         return True, ""
 
+    def destination(self, trigger: Trigger | str) -> State | None:
+        """**预判**迁移目标态而不改变状态；不可迁移返回 ``None``。
+
+        给「先校验、后调用 ``apply``」的入口用：调用方据此判断本次动作是否会被接受，
+        避免出现「先改了状态、再抛 409 拒绝」这种带副作用的拒绝。
+        """
+        trigger = Trigger(trigger)
+        ok, _reason = self.can_fire(trigger)
+        if not ok:
+            return None
+        if trigger in WILDCARD:
+            return WILDCARD[trigger]
+        return TRANSITIONS[(self.state, trigger)]
+
     def fire(
         self, trigger: Trigger | str, *, context: Mapping[str, Any] | None = None
     ) -> TransitionResult:

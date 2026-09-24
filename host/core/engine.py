@@ -122,13 +122,20 @@ class Engine:
     def apply(
         self, trigger: Trigger | str, payload: Mapping | None = None, generation: int = 0
     ) -> list[Command]:
-        """驱动状态机并按迁移发出命令；非法迁移返回空列表（不抛异常）。"""
+        """驱动状态机并按迁移发出命令；非法迁移返回空列表（不抛异常）。
+
+        **代数纪律**：``fire()`` 会在「进入 IDLE」时把 ``session_generation`` 加一，所以
+        EXIT 命令必须携带**迁移之前**的代数——它描述的是「正在离开的那个会话」。若误用迁移
+        后的代数，取消录音时下游 ``_finish_recording`` 会判代数不符而走兜底，凭空多录一段。
+        ENTER / NOTIFY 描述的才是「刚进入的新会话」，用迁移后的代数。
+        """
         machine = self.state_machine
+        pre_generation = machine.generation
         result = machine.fire(trigger, context=payload)
         if not result.ok:
             return []
         commands = [
-            Command(kind=kind, payload=dict(payload or {}), generation=machine.generation)
+            Command(kind=kind, payload=dict(payload or {}), generation=pre_generation)
             for kind in EXIT_COMMANDS.get(result.source, ())
         ]
         commands += [

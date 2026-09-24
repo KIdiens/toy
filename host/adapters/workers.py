@@ -182,9 +182,37 @@ class WorkersMixin:
             try:
                 self._fire_due_reminders()
                 self._enforce_thinking_timeout()
+                self._enforce_recording_timeout()
             except Exception as exc:  # noqa: BLE001
                 self._on_worker_error("tick", exc)
             stop_event.wait(TICK_INTERVAL_S)
+
+    def _enforce_recording_timeout(self) -> None:
+        """RECORDING 驻留上限兜底：超时即替用户结束本轮录音。
+
+        为什么必须有：自动收尾的唯一判据是「录满 ``DEFAULT_RECORD_LIMIT_S``」，而
+        ``NullAudioBackend`` 只录 2.0s、永远够不到上限——于是无硬件档位下按一次对话键
+        再走开，设备会**永久停在 RECORDING**（实测 24s 仍在录）。真机档位同样需要这条：
+        用户中途放下设备时不该把 recorder 一直占着。
+        """
+        now = self.clock.now_ms()
+        if self.state_machine.state is not State.RECORDING:
+            self._recording_since_ms = None
+            return
+        if self._recording_since_ms is None:
+            self._recording_since_ms = now
+            return
+        if now - self._recording_since_ms >= int(self._record_limit_s() * 1000):
+            self._recording_since_ms = None
+            self._log_info("RECORDING 驻留超时 %.0fs，自动结束本轮录音",
+                           self._record_limit_s())
+            self._publish(EventKind.REC_STOP, {"auto": "timeout"},
+                          self.state_machine.generation)
+
+    def _record_limit_s(self) -> float:
+        """录音上限秒数：以 recorder 的策略为准，缺失时回落到默认值。"""
+        policy = getattr(self.recorder, "policy", None)
+        return float(getattr(policy, "max_seconds", None) or DEFAULT_RECORD_LIMIT_S)
 
     def _fire_due_reminders(self) -> None:
         if self.scheduler is None:

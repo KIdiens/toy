@@ -84,6 +84,19 @@ def get(db: Database, reminder_id: int) -> Reminder:
     return _row_to_reminder(row)
 
 
+def get_by_idempotency_key(db: Database, idempotency_key: str) -> Reminder | None:
+    """按幂等键取回既有提醒（走唯一索引 ``reminders_idempotency_key_uq``）；无则 ``None``。
+
+    存在的理由：「幂等冲突后要返回哪一条」必须有确定答案。调用方若靠
+    ``list_by_profile(...)[-1]`` 之类的启发式去猜，重放请求会返回**另一条**提醒，
+    属静默数据不一致。
+    """
+    row = db.connect().execute(
+        f"SELECT {_COLUMNS} FROM reminders WHERE idempotency_key = ?", (idempotency_key,)
+    ).fetchone()
+    return _row_to_reminder(row) if row is not None else None
+
+
 def list_by_profile(
     db: Database, profile_id: int, *, status: str | None = None
 ) -> list[Reminder]:
