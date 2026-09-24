@@ -170,3 +170,48 @@ def test_drive_letter_path_still_reports_absolute_path(tmp_path: Path) -> None:
     pack = _zip(tmp_path / "drive.zip", {"C:/Windows/x.txt": "x"})
     with pytest.raises(rolepack.RolePackError, match="绝对路径"):
         rolepack.validate_zip(pack)
+
+
+# ------------------------------------------------------------------ 成员名矩阵
+# 把 `_norm_path`（折叠 `.` 段、保留大小写）与 `_fold_name`（再叠大小写折叠）的
+# 全部分支固化成表。**这两个函数的语义差异极易在后续改动中被抹平**：
+# 抹平大小写 → 误拒 `Role.json`；抹平 `.` 段 → 漏放 `./role.json` 或漏拦别名冲突。
+ROLE_A = json.dumps(VALID_ROLE, ensure_ascii=False)
+ROLE_B = json.dumps({**VALID_ROLE, "role_id": 2, "config_version": "7.7.7"}, ensure_ascii=False)
+
+_MATRIX: tuple[tuple[str, dict[str, str], str], ...] = (
+    ("单成员 role.json", {"role.json": ROLE_A}, "accept"),
+    ("单成员 Role.json", {"Role.json": ROLE_A}, "missing"),
+    ("`./` 前缀", {"./role.json": ROLE_A}, "accept"),
+    ("`.\\` 前缀", {".\\role.json": ROLE_A}, "accept"),
+    ("仅嵌套（缺根级）", {"dir/role.json": ROLE_A}, "missing"),
+    ("根级 + 嵌套同名", {"role.json": ROLE_A, "dir/role.json": ROLE_B}, "accept"),
+    ("仅目录条目 role.json/", {"role.json/": ""}, "missing"),
+    ("跨目录同名 a/ 与 A/", {"a/role.json": ROLE_A, "A/role.json": ROLE_B}, "conflict"),
+    ("`./Role.json` + role.json", {"./Role.json": ROLE_A, "role.json": ROLE_B}, "conflict"),
+    ("`./role.json` + role.json", {"./role.json": ROLE_A, "role.json": ROLE_B}, "conflict"),
+    ("role.json + Role.json", {"role.json": ROLE_A, "Role.json": ROLE_B}, "conflict"),
+    ("`./dir/../role.json` 穿越", {"./dir/../role.json": ROLE_A}, "traversal"),
+)
+
+
+@pytest.mark.parametrize(("entries", "expect"), [c[1:] for c in _MATRIX],
+                         ids=[c[0] for c in _MATRIX])
+def test_member_name_matrix(tmp_path: Path, entries: dict[str, str], expect: str) -> None:
+    pack = _zip(tmp_path / "matrix.zip", entries)
+
+    if expect == "accept":
+        rolepack.validate_zip(pack)
+        # 取到的必须是**根级**那一份（嵌套同名不得截胡）
+        assert json.loads(rolepack.read_member(pack))["role_id"] == 1
+    elif expect == "missing":
+        with pytest.raises(rolepack.RolePackError, match="缺少 role.json"):
+            rolepack.validate_zip(pack)
+    elif expect == "conflict":
+        with pytest.raises(rolepack.RolePackError, match="归一化后冲突"):
+            rolepack.validate_zip(pack)
+    elif expect == "traversal":
+        with pytest.raises(rolepack.RolePackError, match="穿越"):
+            rolepack.validate_zip(pack)
+    else:  # pragma: no cover - 表写错时立刻暴露
+        raise AssertionError(f"未知期望值: {expect}")

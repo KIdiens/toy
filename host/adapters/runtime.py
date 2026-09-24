@@ -17,7 +17,7 @@ from host.ai.stub_provider import build_stub_triad
 from host.ai.tools import ToolRegistry
 from host.audio.catalog import ContentCatalog
 from host.audio.null_backend import NullAudioBackend
-from host.audio.player import VOLUME_LEVELS, Player
+from host.audio.player import DEFAULT_LEVEL, VOLUME_LEVELS, Player
 from host.audio.recorder import Recorder
 from host.core.bus import EventBus, WorkQueue
 from host.core.clock import RealClock
@@ -117,7 +117,7 @@ def build_context(
     # 音量档位从持久化设置水合：否则「设置页保存的音量」与「启动后的实际音量」不一致，
     # 而物理音量键改档若不回写，重启即丢。取值非法时回落默认档，不抛。
     stored_level = settings_repo.get(database, "volume", default=None)
-    initial_level = stored_level if stored_level in VOLUME_LEVELS else "mid"
+    initial_level = stored_level if stored_level in VOLUME_LEVELS else DEFAULT_LEVEL
     player = Player(backend, clock=clock, level=initial_level)
     recorder = Recorder(backend, player=player)
 

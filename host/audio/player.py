@@ -11,12 +11,13 @@ from host.audio.backend import DEFAULT_SAMPLE_RATE
 
 VOLUME_LEVELS: dict[str, float] = {"low": 0.3, "mid": 0.6, "high": 1.0}
 LEVEL_ORDER: tuple[str, ...] = ("low", "mid", "high")
+DEFAULT_LEVEL: str = "mid"
 
 
 class Player:
     """在共享后端上串行化播放；维护音量档位与播放进度。"""
 
-    def __init__(self, backend, *, level: str = "mid", clock=None) -> None:
+    def __init__(self, backend, *, level: str = DEFAULT_LEVEL, clock=None) -> None:
         if level not in VOLUME_LEVELS:
             raise ValueError(f"未知音量档位: {level}")
         self.backend = backend
@@ -41,10 +42,22 @@ class Player:
         self._level = level
         return self._level
 
-    def cycle_level(self) -> str:
-        """低→中→高→低（音量键的内部迁移）。"""
+    def peek_next_level(self) -> str:
+        """**不改变状态**地返回下一档。
+
+        音量键必须「先落库、再生效」，所以需要先拿到目标档位交给 `patch_settings`：
+        若先 `cycle_level()` 再写库，写库失败就会留下「档位已变、设置未落库」的分叉。
+        """
         index = LEVEL_ORDER.index(self._level)
-        return self.set_level(LEVEL_ORDER[(index + 1) % len(LEVEL_ORDER)])
+        return LEVEL_ORDER[(index + 1) % len(LEVEL_ORDER)]
+
+    def cycle_level(self) -> str:
+        """低→中→高→低（音量键的内部迁移）。
+
+        生产路径**不**直接调用它——按键改档走 ``patch_settings``，由那里统一
+        「先落库、再 set_level」，保证持久化与运行期档位同成同败。
+        """
+        return self.set_level(self.peek_next_level())
 
     def play(self, clip, *, sample_rate: int | None = None) -> int:
         """播放片段，返回时长毫秒。真实后端内部阻塞；空后端立即返回。"""

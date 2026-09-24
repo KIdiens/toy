@@ -280,3 +280,40 @@ def test_volume_key_persists_and_hydrates_across_restart(tmp_path: Path) -> None
         assert reopened.player.level == "high", "重启后音量档位丢失（未从设置水合）"
     finally:
         reopened.close()
+
+
+def test_invalid_stored_volume_falls_back_everywhere(tmp_path: Path) -> None:
+    """库里残留非法档位时，装配期与设置出参都必须回落到默认档，不得各说各话。"""
+    from host.storage import settings_repo
+
+    first = _context(tmp_path, "volume_bad.sqlite3")
+    try:
+        settings_repo.set(first.db, "volume", "loud", now=first.clock.now_iso())
+        assert first.get_settings()["volume_level"] == "mid", "设置页原样回吐了非法档位"
+    finally:
+        first.close()
+
+    reopened = _context(tmp_path, "volume_bad.sqlite3")
+    try:
+        assert reopened.player.level == "mid", "装配期未回落默认档"
+        assert reopened.get_settings()["volume_level"] == "mid"
+    finally:
+        reopened.close()
+
+
+def test_volume_step_keeps_level_when_persistence_fails(tmp_path: Path,
+                                                        monkeypatch) -> None:
+    """落库失败时档位必须保持不变（同成同败），并让故障可见——不留静默分叉。"""
+    context = _context(tmp_path, "volume_fail.sqlite3")
+    with _running(context):
+        def boom(_patch):
+            raise RuntimeError("模拟写设置失败")
+
+        monkeypatch.setattr(context, "patch_settings", boom)
+        before = context.player.level
+
+        context.press_button(3)
+        time.sleep(0.3)
+
+        assert context.player.level == before, "写库失败时档位却已改变（设置与运行期分叉）"
+        assert context.worker_faults >= 1, "写库失败必须可见，不得静默吞掉"

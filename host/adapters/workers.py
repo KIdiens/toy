@@ -140,11 +140,11 @@ class WorkersMixin:
         elif kind is CommandKind.STOP_AUDIO:
             self.player.stop()
         elif kind is CommandKind.VOLUME_STEP:
-            level = self.player.cycle_level()
-            # 必须回写设置：否则「按键改音量」与「设置页显示」分叉（player=high / settings=mid），
-            # 且重启后音量丢失——家长界面显示与实际播放不一致。
-            self.patch_settings({"volume_level": level})
-            self._log_info("音量档位 -> %s", level)
+            # 先算目标档位、交给 `patch_settings` 统一「落库 + set_level」：
+            # 写库失败时档位保持不变，不会出现「档位已变、设置未落库」的分叉；
+            # 失败由 `_audio_loop` 的兜底 except 记成 worker_faults（可见，非静默）。
+            self.patch_settings({"volume_level": self.player.peek_next_level()})
+            self._log_info("音量档位 -> %s", self.player.level)
         else:
             self._warn_unhandled("audio", command)
 

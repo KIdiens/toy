@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from host.audio.player import DEFAULT_LEVEL, VOLUME_LEVELS
+
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -43,8 +45,11 @@ def reminder_dto(reminder) -> dict[str, Any]:
 
 
 def settings_dto(values: dict[str, str], *, sim_mode: bool, wifi_ssid: str = "") -> dict[str, Any]:
+    # 音量档位**白名单化**：库里可能残留非法值（人工改库、历史数据、外部工具写入）。
+    # 运行期 Player 会回落到默认档，若出参原样回吐非法值，界面显示会与实际播放分叉。
+    stored_volume = values.get("volume")
     return {
-        "volume_level": values.get("volume", "mid"),
+        "volume_level": stored_volume if stored_volume in VOLUME_LEVELS else DEFAULT_LEVEL,
         "language": values.get("language", "Auto"),
         "memory_enabled": as_bool(values.get("memory_enabled"), default=True),
         "content_rating_max": values.get("content_rating_max", "kid"),
