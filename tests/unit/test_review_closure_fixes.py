@@ -231,3 +231,52 @@ def test_new_recording_restarts_the_timeout_origin(tmp_path: Path) -> None:
             f"新一轮沿用了上一轮的起点（origin={origin}，now={context.clock.now_ms()}）"
         )
         assert context.state_machine.state is State.RECORDING, "新一轮被残留计时器提前收尾了"
+
+
+def test_new_recording_is_not_truncated_when_no_tick_saw_the_idle_gap(tmp_path: Path) -> None:
+    """取消→IDLE 与重按→RECORDING 落在相邻两次 tick 之间时，新一轮不得被旧起点收尾。
+
+    这是「用 tick 是否观测到非 RECORDING 来清零计时器」的固有漏洞：tick 从未见到 IDLE，
+    旧起点被沿用 → 新一轮被立刻判超时 → 录音被静默截断（UI 表现为「刚开口就说完了」）。
+    会话键改为状态机 history 里「最后一次进入 RECORDING」的下标后，这个漏洞被堵住。
+    """
+    context = _context(tmp_path, "origin2.sqlite3")
+    context._record_limit_s = lambda: 0.15
+    try:
+        context.press_button(1)                    # 第一轮 -> RECORDING
+        context._enforce_recording_timeout()       # 第一拍 tick：记下起点与会话键
+        first_mark = context._rec_entry_mark
+        time.sleep(0.25)                           # 让第一轮在时间上确实超过上限
+
+        context.press_button(2)                    # 取消 -> IDLE
+        context.press_button(1)                    # 立刻重按 -> RECORDING（tick 没观测到 IDLE）
+        assert context.state_machine.state is State.RECORDING
+
+        context._enforce_recording_timeout()       # 第二拍 tick
+        assert context._rec_entry_mark > first_mark, "会话键没有随新一轮录音前进"
+        assert context.state_machine.state is State.RECORDING, (
+            "新一轮被上一轮的计时起点立刻收尾（录音被静默截断）"
+        )
+    finally:
+        context.close()
+
+
+# --------------------------------------------------------------- 音量持久化
+def test_volume_key_persists_and_hydrates_across_restart(tmp_path: Path) -> None:
+    """音量键改档必须回写设置，并在重启后水合，否则界面显示与实际播放分叉、音量重启即丢。"""
+    context = _context(tmp_path, "volume_persist.sqlite3")
+    with _running(context):
+        assert context.player.level == "mid"
+        context.press_button(3)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and context.player.level == "mid":
+            time.sleep(0.02)
+        assert context.player.level == "high"
+        assert context.get_settings()["volume_level"] == "high", "按键改音量未回写设置"
+
+    reopened = _context(tmp_path, "volume_persist.sqlite3")
+    try:
+        assert reopened.player.level == "high", "重启后音量档位丢失（未从设置水合）"
+    finally:
+        reopened.close()

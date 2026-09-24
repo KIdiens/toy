@@ -77,6 +77,7 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     _rec_started_gen: int = -1
     _thinking_since_ms: int | None = None
     _recording_since_ms: int | None = None
+    _rec_entry_mark: int = -1
 
     # ---------- 状态快照 ----------
     def _mcu_snapshot(self) -> dict[str, Any]:

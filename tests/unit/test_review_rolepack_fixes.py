@@ -124,13 +124,44 @@ def test_uppercase_role_json_alone_does_not_satisfy_the_requirement(tmp_path: Pa
     """只含 `Role.json` 的包必须被拒。
 
     大小写不敏感的文件系统上，`incoming / "role.json"` 会命中 `Role.json`，
-    于是「必须含 role.json」被满足 —— 属于靠文件系统行为蒙混过关。
+    于是「必须含 role.json」被满足 —— 属于靠文件系统行为蒙混过关；Linux 上却会失败，
+    平台行为不一致。
     """
     pack = _zip(tmp_path / "upper.zip", {
         "Role.json": json.dumps(VALID_ROLE, ensure_ascii=False),
         "actions/wave.json": json.dumps({"schema": 1}),
     })
     with pytest.raises(rolepack.RolePackError, match="缺少 role.json"):
+        rolepack.validate_zip(pack)
+
+
+def test_dot_prefixed_pack_is_still_accepted(tmp_path: Path) -> None:
+    """`zip -r .` 生成的包带 `./` 前缀，属合法包，不得被误拒。"""
+    pack = _zip(tmp_path / "dot.zip", {
+        "./role.json": json.dumps(VALID_ROLE, ensure_ascii=False),
+        "./actions/wave.json": json.dumps({"schema": 1}),
+    })
+
+    rolepack.validate_zip(pack)                       # 不抛
+    assert json.loads(rolepack.read_member(pack))["role_id"] == 1
+
+    target = tmp_path / "roles" / "1"
+    rolepack.import_rolepack(pack, target)
+    assert (target / "role.json").is_file()
+
+
+def test_dot_alias_collision_is_rejected(tmp_path: Path) -> None:
+    """`role.json` 与 `./role.json` 在任何文件系统上都是同一路径 → 必须判冲突。
+
+    否则「校验读到的那一份」（role_id=1，据此算目标目录）与「最后落盘的那一份」
+    （role_id=2，后写覆盖）不是同一份内容：校验被绕过、落盘 role_id 与目录名错位，
+    换入成功后 load_all 才发现双来源 → 500，且旧版本已被销毁（违反 AC-25）。
+    """
+    pack = _zip(tmp_path / "alias.zip", {
+        "role.json": json.dumps(VALID_ROLE, ensure_ascii=False),
+        "./role.json": json.dumps({**VALID_ROLE, "role_id": 2}, ensure_ascii=False),
+    })
+    with pytest.raises(rolepack.RolePackError, match="归一化后冲突"):
         rolepack.validate_zip(pack)
 
 

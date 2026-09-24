@@ -140,7 +140,11 @@ class WorkersMixin:
         elif kind is CommandKind.STOP_AUDIO:
             self.player.stop()
         elif kind is CommandKind.VOLUME_STEP:
-            self._log_info("音量档位 -> %s", self.player.cycle_level())
+            level = self.player.cycle_level()
+            # 必须回写设置：否则「按键改音量」与「设置页显示」分叉（player=high / settings=mid），
+            # 且重启后音量丢失——家长界面显示与实际播放不一致。
+            self.patch_settings({"volume_level": level})
+            self._log_info("音量档位 -> %s", level)
         else:
             self._warn_unhandled("audio", command)
 
@@ -148,10 +152,6 @@ class WorkersMixin:
         with self._rec_lock:
             self._rec_ready.clear()
             self._rec_started_gen = generation
-        # 录音起点由**真正开始录音的这一刻**决定，而不是由 tick 线程的采样时刻决定。
-        # 否则「取消后立刻重按」若落在同一个 tick 空档内，上一轮的起点会被新一轮沿用，
-        # 新一轮会在下一个 tick 被立刻收尾（实测会被截断到 ≤0.5s）。
-        self._recording_since_ms = self.clock.now_ms()
         recording = self.recorder.record(DEFAULT_RECORD_LIMIT_S)
         with self._rec_lock:
             self._last_recording = recording
@@ -204,18 +204,37 @@ class WorkersMixin:
         now = self.clock.now_ms()
         if self.state_machine.state is not State.RECORDING:
             self._recording_since_ms = None
+            self._rec_entry_mark = -1
             return
-        if self._recording_since_ms is None:
-            # 兜底起点：正常情况下 RECORD_START 到达时已由 `_record_once` 写好起点，
-            # 这里只覆盖「绕过 RECORD_START 直接把状态机推进 RECORDING」的测试/注入路径。
+        # 会话键 = 「最后一次进入 RECORDING」的迁移在 history 里的下标。它由**状态机线程**
+        # 同步维护，不受 audio 线程阻塞影响。
+        # 不能用「tick 是否观测到过非 RECORDING」当清零条件：取消→IDLE 与重按→RECORDING
+        # 若落在相邻两次 tick 之间（间隔 ≤ TICK_INTERVAL_S，实测 0.03s 就能发生），tick 从未
+        # 见到 IDLE，旧起点被新一轮沿用 → 新一轮被立刻收尾、录音被静默截断。
+        key = self._recording_session_mark()
+        if self._recording_since_ms is None or key != self._rec_entry_mark:
+            self._rec_entry_mark = key
             self._recording_since_ms = now
             return
         if now - self._recording_since_ms >= int(self._record_limit_s() * 1000):
             self._recording_since_ms = None
+            self._rec_entry_mark = -1
             self._log_info("RECORDING 驻留超时 %.0fs，自动结束本轮录音",
                            self._record_limit_s())
             self._publish(EventKind.REC_STOP, {"auto": "timeout"},
                           self.state_machine.generation)
+
+    def _recording_session_mark(self) -> int:
+        """最后一次「进入 RECORDING」的迁移下标；历史里没有则返回 -1。
+
+        从尾部倒扫——当前就处在 RECORDING，命中通常落在最后几条，近似 O(1)。
+        """
+        history = self.state_machine.history
+        for index in range(len(history) - 1, -1, -1):
+            result = history[index]
+            if result.ok and result.dest is State.RECORDING:
+                return index
+        return -1
 
     def _record_limit_s(self) -> float:
         """录音上限秒数：以 recorder 的策略为准，缺失时回落到默认值。"""
