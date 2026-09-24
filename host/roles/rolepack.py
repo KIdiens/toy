@@ -103,6 +103,11 @@ def validate_zip(zip_path: str | Path) -> list[zipfile.ZipInfo]:
             total += info.file_size
         if total > MAX_TOTAL_UNCOMPRESSED:
             raise RolePackError(f"解压总大小超上限: {total} > {MAX_TOTAL_UNCOMPRESSED}")
+        # 按**精确名**要求 role.json 存在。只靠「解压后目录里有 role.json」在大小写不敏感的
+        # 文件系统上会被单成员 `Role.json` 满足（`incoming / "role.json"` 会命中它），
+        # 于是「必须含合法 role.json」被绕过；Linux 上行为还与之不一致。
+        if ROLE_JSON not in {info.filename.replace("\\", "/") for info in files}:
+            raise RolePackError(f"角色包缺少 {ROLE_JSON}")
         return infos
 
 
@@ -162,16 +167,22 @@ def import_rolepack(zip_path: str | Path, target_dir: str | Path) -> ExtractRepo
         except OSError as exc:
             # 换入失败必须把旧版本**还原回原位**。否则「导入失败」的后果是「角色凭空消失」：
             # 旧版本只剩在 `<role>.bak` 里，而加载方不会读它（违反 AC-25「失败保留旧版本」）。
+            restored = False
             if backup.exists() and not target.exists():
                 try:
                     backup.rename(target)
+                    restored = True
                 except OSError as restore_exc:
                     raise RolePackError(
                         f"角色包换入失败，且旧版本还原也失败：旧版本在 {backup}，"
                         f"目标位 {target} 当前缺失，需人工恢复。"
                         f"（换入错误: {exc}；还原错误: {restore_exc}）"
                     ) from exc
-            raise
+            # 统一转成 RolePackError：这是本模块对外承诺的失败类型，调用方（web 层）
+            # 据此回 400 契约错误；抛裸 OSError 会漏成纯文本 500。
+            raise RolePackError(
+                f"角色包换入失败{'（旧版本已还原）' if restored else ''}: {exc}"
+            ) from exc
         shutil.rmtree(backup, ignore_errors=True)
         return ExtractReport(files=report.files, total_bytes=report.total_bytes,
                              role_json=str(target / ROLE_JSON))

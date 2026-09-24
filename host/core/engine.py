@@ -75,7 +75,16 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
         action = trigger_for_button(machine.state, int(event.payload.get("n", 0)))
         if action in (BUTTON_NOOP, BUTTON_DISCARD):
             return []
-        return engine.apply(action, event.payload, event.generation)
+        commands = engine.apply(action, event.payload, event.generation)
+        if action == Trigger.VOLUME_PRESS.value:
+            # 音量键是**内部迁移**（不改状态、不产生 EXIT/ENTER 命令），它的实际效果是
+            # 「音量档位进一档」。这条接线此前完全缺失——`Player.cycle_level()` 在生产代码里
+            # 零调用者，于是音量键按下去什么都不会发生。
+            commands.append(
+                Command(kind=CommandKind.VOLUME_STEP, payload=dict(event.payload or {}),
+                        generation=machine.generation)
+            )
+        return commands
     if kind in (EventKind.MCU_FAULT, EventKind.MCU_ERROR):
         return engine.apply(Trigger.SAFETY_TRIP, event.payload, event.generation)
     if kind is EventKind.MCU_STATE:
@@ -134,6 +143,18 @@ class Engine:
         result = machine.fire(trigger, context=payload)
         if not result.ok:
             return []
+        notify = Command(
+            kind=CommandKind.NOTIFY,
+            payload={"state": result.dest.value, "trigger": result.trigger.value},
+            generation=machine.generation,
+        )
+        if not result.changed:
+            # 自环迁移（音量键：IDLE/THINKING/SPEAKING/PERFORMING 各自 → 自身）语义是
+            # 「内部意图，不改变状态」（state_machine 模块注释已如此声明），因此**不得**
+            # 下发 EXIT/ENTER 命令。否则音量键会：重发 NET_REQUEST（重复 ASR/LLM 调用与计费）、
+            # 重发 PLAY_AUDIO（无 clip → 立刻 PLAY_DONE → 截断正在说的话）、
+            # 重发 PLAY_ACTION（掐掉正在跑的动作）。
+            return [notify]
         commands = [
             Command(kind=kind, payload=dict(payload or {}), generation=pre_generation)
             for kind in EXIT_COMMANDS.get(result.source, ())
@@ -142,13 +163,7 @@ class Engine:
             Command(kind=kind, payload=dict(payload or {}), generation=machine.generation)
             for kind in ENTER_COMMANDS.get(result.dest, ())
         ]
-        commands.append(
-            Command(
-                kind=CommandKind.NOTIFY,
-                payload={"state": result.dest.value, "trigger": result.trigger.value},
-                generation=machine.generation,
-            )
-        )
+        commands.append(notify)
         return commands
 
     def step(self, timeout: float | None = None) -> bool:

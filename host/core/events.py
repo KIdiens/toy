@@ -45,6 +45,7 @@ class CommandKind(StrEnum):
     RECORD_STOP = "record_stop"
     PLAY_AUDIO = "play_audio"
     STOP_AUDIO = "stop_audio"
+    VOLUME_STEP = "volume_step"  # 音量键：档位进一档（内部迁移，不改变状态）
     NET_REQUEST = "net_request"
     PERSIST = "persist"
     NOTIFY = "notify"

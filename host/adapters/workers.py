@@ -139,6 +139,8 @@ class WorkersMixin:
             self._play_clip(command)
         elif kind is CommandKind.STOP_AUDIO:
             self.player.stop()
+        elif kind is CommandKind.VOLUME_STEP:
+            self._log_info("音量档位 -> %s", self.player.cycle_level())
         else:
             self._warn_unhandled("audio", command)
 
@@ -146,6 +148,10 @@ class WorkersMixin:
         with self._rec_lock:
             self._rec_ready.clear()
             self._rec_started_gen = generation
+        # 录音起点由**真正开始录音的这一刻**决定，而不是由 tick 线程的采样时刻决定。
+        # 否则「取消后立刻重按」若落在同一个 tick 空档内，上一轮的起点会被新一轮沿用，
+        # 新一轮会在下一个 tick 被立刻收尾（实测会被截断到 ≤0.5s）。
+        self._recording_since_ms = self.clock.now_ms()
         recording = self.recorder.record(DEFAULT_RECORD_LIMIT_S)
         with self._rec_lock:
             self._last_recording = recording
@@ -200,6 +206,8 @@ class WorkersMixin:
             self._recording_since_ms = None
             return
         if self._recording_since_ms is None:
+            # 兜底起点：正常情况下 RECORD_START 到达时已由 `_record_once` 写好起点，
+            # 这里只覆盖「绕过 RECORD_START 直接把状态机推进 RECORDING」的测试/注入路径。
             self._recording_since_ms = now
             return
         if now - self._recording_since_ms >= int(self._record_limit_s() * 1000):

@@ -179,3 +179,55 @@ def test_invalid_action_file_is_rejected_at_the_door(tmp_path: Path) -> None:
         assert context.fault is None
     finally:
         context.close()
+
+
+# --------------------------------------------------------------- 自环迁移
+def test_volume_key_is_an_internal_migration() -> None:
+    """音量键是自环迁移，**不得**下发 EXIT/ENTER 命令。
+
+    否则会重发 NET_REQUEST（重复 ASR/LLM 调用）、重发 PLAY_AUDIO（截断正在说的话）、
+    重发 PLAY_ACTION（掐掉正在跑的动作）——与 state_machine 自己声明的
+    「音量键是内部迁移（不改状态）」直接矛盾。
+    """
+    forbidden = {CommandKind.NET_REQUEST, CommandKind.PLAY_AUDIO, CommandKind.PLAY_ACTION}
+    for state in (State.IDLE, State.THINKING, State.SPEAKING, State.PERFORMING):
+        machine = SessionStateMachine(initial=state, generation=3)
+        engine = Engine(EventBus(), CommandRouter(), state_machine=machine)
+
+        commands = engine.apply(Trigger.VOLUME_PRESS)
+
+        kinds = {c.kind for c in commands}
+        assert machine.state is state, f"{state.value} 自环却改了状态"
+        assert not (kinds & forbidden), f"{state.value} 自环下发了 {kinds & forbidden}"
+        assert CommandKind.NOTIFY in kinds, "自环也应当有迁移通知"
+
+
+def test_volume_key_steps_the_level(tmp_path: Path) -> None:
+    """音量键必须真的改变音量档位（`Player.cycle_level` 此前零生产调用者）。"""
+    context = _context(tmp_path, "volume.sqlite3")
+    with _running(context):
+        assert context.player.level == "mid"
+        context.press_button(3)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and context.player.level == "mid":
+            time.sleep(0.02)
+        assert context.player.level == "high", "音量键按下去没有任何效果"
+
+
+# --------------------------------------------------------------- 录音起点
+def test_new_recording_restarts_the_timeout_origin(tmp_path: Path) -> None:
+    """新增录的开始必须重置录音兜底计时器，否则新一轮会被立刻收尾。"""
+    context = _context(tmp_path, "origin.sqlite3")
+    context._record_limit_s = lambda: 5.0
+    context._recording_since_ms = 1  # 模拟上一轮残留的起点
+    with _running(context):
+        context.press_button(1)
+        time.sleep(0.4)
+
+        origin = context._recording_since_ms
+        assert origin is not None
+        assert context.clock.now_ms() - origin < 3000, (
+            f"新一轮沿用了上一轮的起点（origin={origin}，now={context.clock.now_ms()}）"
+        )
+        assert context.state_machine.state is State.RECORDING, "新一轮被残留计时器提前收尾了"

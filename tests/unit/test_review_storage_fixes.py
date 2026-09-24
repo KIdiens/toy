@@ -33,6 +33,22 @@ def test_idempotent_replay_returns_the_same_reminder(sim_context) -> None:
     assert replay["text"] == first["text"]
 
 
+def test_empty_idempotency_key_is_treated_as_absent(sim_context) -> None:
+    """空串幂等键必须归一成「无键」。
+
+    DB 的唯一索引把 `""` 当**真实取值**，而调用方若把它当「无键」，第二次同空键提交
+    就会撞唯一约束、又找不到既有记录 → 抛 HostError → 纯文本 500。
+    用户可控输入不该产生 500。
+    """
+    payload = {"text": "喝水", "due_at_utc": "2030-01-01T00:00:00Z",
+               "profile_id": "default", "idempotency_key": ""}
+
+    first = sim_context.create_reminder(dict(payload))
+    second = sim_context.create_reminder(dict(payload))
+
+    assert first["id"] and second["id"]
+
+
 # ------------------------------------------------------------------ 编号范围
 @pytest.mark.parametrize("bad", [TOO_BIG, str(2**63), f"-{2**63 + 1}"])
 def test_profile_id_out_of_range_is_a_clarify_error(sim_context, bad: str) -> None:

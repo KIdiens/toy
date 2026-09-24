@@ -23,6 +23,7 @@ AUDIO_KINDS: frozenset[CommandKind] = frozenset({
     CommandKind.RECORD_STOP,
     CommandKind.PLAY_AUDIO,
     CommandKind.STOP_AUDIO,
+    CommandKind.VOLUME_STEP,
 })
 
 

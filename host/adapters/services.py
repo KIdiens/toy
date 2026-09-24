@@ -84,7 +84,10 @@ class StorageFacade:
 
     def create_reminder(self, payload: dict[str, Any]) -> dict[str, Any]:
         pid = self._resolve_profile(payload.get("profile_id"))
-        idempotency_key = payload.get("idempotency_key")
+        # 空串必须归一成 None：DB 的 `idempotency_key` 唯一索引把 `""` 当**真实取值**，
+        # 而这里若按「无键」处理，第二次同空键提交就会撞唯一约束 → 我们找不到既有记录
+        # → 抛 HostError → 纯文本 500。用户可控输入不该产生 500。
+        idempotency_key = payload.get("idempotency_key") or None
         try:
             result = reminder_tool.create(
                 self.db,
