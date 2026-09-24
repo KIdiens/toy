@@ -54,8 +54,8 @@ class MotionClient:
         validate(action)
         expected_role = int(role_id if role_id is not None else action["role_id"])
         link, clock = self.link, self.clock
-        link.open()
         try:
+            link.open()
             clock.sleep(self.boot_wait_s)
             link.reset_input_buffer()
             link.write_line("STOP")
@@ -68,8 +68,24 @@ class MotionClient:
             self._await_arm(expected_role)
             return self._stream(action, expected_role)
         finally:
+            self._safe_stop_and_close(link)
+
+    def _safe_stop_and_close(self, link) -> None:
+        """收尾必须**无条件**执行：播放中被拔线时写 STOP 会抛 OSError，但 close() 仍必须跑。
+
+        ``link.open()`` 失败时 ``write_line`` 会抛 ``RuntimeError``（串口未打开），同样必须
+        被吞下，好让异常沿 ``play()`` 原样上抛（由 ``_run_play`` 归类为故障）。
+        """
+        try:
             link.write_line("STOP")
+        except Exception as exc:  # noqa: BLE001  收尾阶段不允许再抛，否则掩盖真实故障
+            if self.logger is not None:
+                self.logger.warning("收尾发 STOP 失败（继续关闭串口）：%s", exc)
+        try:
             link.close()
+        except Exception as exc:  # noqa: BLE001
+            if self.logger is not None:
+                self.logger.warning("关闭串口失败：%s", exc)
 
     # ---------- 前置阶段 ----------
     def _await_state(self) -> list[int] | None:

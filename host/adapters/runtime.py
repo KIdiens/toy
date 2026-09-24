@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from host.adapters.ports import AppContext
+from host.adapters.queues import CommandRouter
 from host.ai.router import AiRouter
 from host.ai.stub_provider import build_stub_triad
 from host.ai.tools import ToolRegistry
@@ -97,8 +98,10 @@ def build_context(
 
     state_machine = SessionStateMachine(logger=log)
     bus = EventBus()
-    work: WorkQueue[Command] = WorkQueue(name="work")
-    engine = Engine(bus, work, state_machine=state_machine, clock=clock, logger=log)
+    # 一条队列拆成三路：motion 归 host-worker，net/audio 各有独立消费者线程（P0-1）。
+    router_out = CommandRouter()
+    work: WorkQueue[Command] = router_out.motion
+    engine = Engine(bus, router_out, state_machine=state_machine, clock=clock, logger=log)
 
     database = db if db is not None else Database(settings.storage.path)
     database.initialize()
@@ -142,6 +145,9 @@ def build_context(
         simulate=bool(simulate),
         network_online=not settings.ai.is_stub,
         log=log,
+        net_queue=router_out.net,
+        audio_queue=router_out.audio,
+        _router=router_out,
     )
     context.router = _build_ai(
         settings, registry, lambda: context.memory_context(context.ensure_profile()), log

@@ -35,6 +35,7 @@ EVENT_TRIGGERS: dict[EventKind, Trigger] = {
 ENTER_COMMANDS: dict[State, tuple[CommandKind, ...]] = {
     State.RECORDING: (CommandKind.RECORD_START,),
     State.THINKING: (CommandKind.NET_REQUEST,),  # 录音结束 → 交给 net 线程做 ASR/LLM（核心不阻塞）
+    State.SPEAKING: (CommandKind.PLAY_AUDIO,),  # 回复就绪 → 交给 audio 线程播放（P0-1）
     State.PERFORMING: (CommandKind.PLAY_ACTION,),
     State.IDLE: (CommandKind.STOP_AUDIO, CommandKind.STOP_MOTION),
 }
@@ -46,6 +47,21 @@ EXIT_COMMANDS: dict[State, tuple[CommandKind, ...]] = {
 }
 
 Dispatcher = Callable[["Engine", Event], list[Command]]
+
+# 「跨会话的异步结果」类事件：由领域线程异步产生、且**可能跨越一次取消/换角色**才回到
+# 核心，因此必须核对 ``generation``，不符一律丢弃（AC-15）。这条边界两侧都各有一个反例，
+# 既不能放宽也不能收紧（回归见 tests/unit/test_generation_guard.py）：
+#
+# - 放宽（连 AI_DONE / AI_FAIL 也收）→ 上一轮的回复会在新会话里被说出来；
+# - 收紧（把 PLAY_DONE / PERFORM_DONE 也算进来）→ 它们是**本地命令回执**而非跨会话结果，
+#   丢弃即永久驻留：``switch_active_role`` 允许在 SPEAKING 期间换角色并令 generation +1，
+#   紧接着到来的 PLAY_DONE 会被误丢，状态机就再收不到离开 SPEAKING 的信号。
+STALE_SENSITIVE: frozenset[EventKind] = frozenset({
+    EventKind.NET_RESULT,
+    EventKind.AI_DONE,
+    EventKind.AI_FAIL,
+    EventKind.REC_STOP,  # 上一轮录音的迟到收尾，不得把新一轮录音提前打断成 THINKING
+})
 
 
 def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
@@ -67,7 +83,7 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
         if line and (line[1] == 0 or line[2] == 0):
             return engine.apply(Trigger.SAFETY_TRIP, event.payload, event.generation)
         return []
-    if kind is EventKind.NET_RESULT and event.generation != machine.generation:
+    if kind in STALE_SENSITIVE and event.generation != machine.generation:
         return []  # 换角色/取消后的迟到回包一律丢弃（AC-15）
     trigger = EVENT_TRIGGERS.get(kind)
     if trigger is None:

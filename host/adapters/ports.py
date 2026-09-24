@@ -18,15 +18,19 @@ from typing import Any
 from host.adapters.execution import ExecutionMixin
 from host.adapters.injection import InjectionMixin
 from host.adapters.services import StorageFacade
+from host.adapters.workers import WorkersMixin
 from host.core.engine import Engine
 from host.core.errors import ConflictError, StorageError
 from host.core.events import CommandKind
 from host.core.state_machine import SessionStateMachine, State, Trigger
 from host.motion.client import MotionClient, PlayResult
 
+# worker 心跳新鲜度阈值：超过即视为「线程已死」（/status 的 worker_alive 探针）。
+WORKER_LIVENESS_MS = 5000
+
 
 @dataclass
-class AppContext(ExecutionMixin, InjectionMixin, StorageFacade):
+class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     """运行期上下文（一个进程一份）。"""
 
     settings: Any
@@ -56,6 +60,22 @@ class AppContext(ExecutionMixin, InjectionMixin, StorageFacade):
     last_result: PlayResult | None = None
     log: Any = field(default=None, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # ---- 领域工作线程（P0-1）：队列句柄、启停句柄、存活探针 ----
+    net_queue: Any = None
+    audio_queue: Any = None
+    _router: Any = field(default=None, repr=False)
+    _worker_stop: Any = field(default=None, repr=False)
+    _domain_threads: list = field(default_factory=list, repr=False)
+    worker_heartbeat_ms: int | None = None
+    worker_faults: int = 0
+    fired_reminders: list = field(default_factory=list)
+    # ---- 对话闭环的录音/超时状态（net↔audio 协作）----
+    _rec_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _rec_ready: threading.Event = field(default_factory=threading.Event, repr=False)
+    _last_recording: Any = field(default=None, repr=False)
+    _last_recording_gen: int = -1
+    _rec_started_gen: int = -1
+    _thinking_since_ms: int | None = None
 
     # ---------- 状态快照 ----------
     def _mcu_snapshot(self) -> dict[str, Any]:
@@ -82,7 +102,15 @@ class AppContext(ExecutionMixin, InjectionMixin, StorageFacade):
             "network_online": bool(self.network_online),
             "fault": fault,
             "action": self.action_progress,
+            "worker_alive": self.worker_alive(),
+            "worker_faults": int(self.worker_faults),
         }
+
+    def worker_alive(self) -> bool:
+        """存活探针：worker 心跳是否新鲜（线程静默死亡时可被 /status 观察到，P0-2）。"""
+        if self.worker_heartbeat_ms is None:
+            return False
+        return (self.clock.now_ms() - self.worker_heartbeat_ms) <= WORKER_LIVENESS_MS
 
     def role_summaries(self) -> list[dict[str, Any]]:
         return self.roles.summaries()
@@ -166,8 +194,11 @@ class AppContext(ExecutionMixin, InjectionMixin, StorageFacade):
 
     # ---------- 关停 ----------
     def close(self) -> None:
+        self.stop_workers()  # 先停领域线程，再关总线/设备，避免线程在关停中投事件
         self.bus.shutdown()
         self.player.backend.close()
+        if self._router is not None:
+            self._router.close()
         try:
             self.db.close_all()
         except StorageError:  # 关停阶段的存储异常只记录，不掩盖

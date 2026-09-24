@@ -25,6 +25,13 @@ from host.core.state_machine import Trigger
 
 DRAIN_LIMIT = 2000
 WORKER_IDLE_S = 0.005
+# motion worker 有意不动作的命令：NOTIFY 仅通知、STOP/STOP_MOTION 由 MotionClient 的
+# finally 收尾（运动结束即已停机）。其余种类落在此队列即视为装配异常，必须告警。
+MOTION_SILENT_KINDS: frozenset[CommandKind] = frozenset({
+    CommandKind.NOTIFY,
+    CommandKind.STOP,
+    CommandKind.STOP_MOTION,
+})
 
 
 class ExecutionMixin:
@@ -44,9 +51,9 @@ class ExecutionMixin:
             return self.status_snapshot()
 
     def _deliver(self, commands) -> None:
-        """把核心命令投进工作队列（调用方通常已持锁）。"""
+        """把核心命令经路由器投进对应领域工作队列（调用方通常已持锁）。"""
         for command in commands:
-            self.work.put(command)
+            self._router.put(command)
 
     # ---------- 队列消费 ----------
     def pump_once(self) -> bool:
@@ -59,6 +66,11 @@ class ExecutionMixin:
                 if not self.motion_busy:
                     return True  # 已被 stop/替换：丢弃陈旧运动命令，不移动硬件
             self._run_play(command)
+        elif command.kind not in MOTION_SILENT_KINDS:
+            # 静默丢弃会让排障无从下手（P0-1）：不认识的命令必须能被看见。
+            if self.log is not None:
+                self.log.warning("[motion worker] 收到未处理命令 %s，已丢弃",
+                                 command.kind.value)
         return True
 
     def _run_play(self, command: Command) -> None:
@@ -72,7 +84,9 @@ class ExecutionMixin:
             if self.motion is None:
                 raise ConflictError("未配置运动链路")
             result = self.motion.play(action, role_id=int(payload["role_id"]))
-        except (HostError, ValueError) as exc:
+        except (HostError, ValueError, OSError) as exc:
+            # OSError 覆盖 pyserial 的 SerialException（串口不存在/被占用/播放中被拔线），
+            # 否则它会越过此处、打穿 worker 线程（P0-2）。
             with self._lock:
                 self.motion_busy = False
                 self._set_fault(exc)
@@ -134,12 +148,24 @@ class ExecutionMixin:
         return steps
 
     def run_forever(self, stop_event=None) -> None:
-        """worker 循环：执行运动命令并推进状态机；空闲时按 5ms 让出，避免空转。"""
+        """worker 循环：执行运动命令并推进状态机；空闲时按 5ms 让出，避免空转。
+
+        **禁止静默死亡**（P0-2）：任何未被下层捕获的异常都在此记日志并降级继续，
+        同时刷新心跳（``worker_heartbeat_ms``）供 ``/status`` 的存活探针读取。
+        """
         while not (stop_event is not None and stop_event.is_set()):
-            if self.work.qsize() > 0:
-                self.pump_once()
-            else:
-                self.dispatch_bus()
+            self.worker_heartbeat_ms = self.clock.now_ms()
+            try:
+                if self.work.qsize() > 0:
+                    self.pump_once()
+                else:
+                    self.dispatch_bus()
+            except Exception as exc:  # noqa: BLE001  兜底：线程存活优先于单次失败
+                self.worker_faults += 1
+                if self.log is not None:
+                    self.log.error("worker 循环异常（已捕获并降级继续）：%s", exc, exc_info=True)
+                self.clock.sleep(WORKER_IDLE_S * 4)
+                continue
             self.clock.sleep(WORKER_IDLE_S)
 
 

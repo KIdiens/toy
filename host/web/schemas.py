@@ -90,6 +90,8 @@ class Status(BaseModel):
     network_online: bool
     fault: Fault | None = None
     action: ActionProgress | None = None
+    worker_alive: bool = True
+    worker_faults: int = 0
 
 
 class RoleSummary(BaseModel):

@@ -434,6 +434,12 @@ components:
             action_id: { type: string }
             seq: { type: integer }
             progress_ms: { type: integer }
+        worker_alive:
+          type: boolean
+          description: worker 线程存活探针（P0-2：线程静默死亡时可观测）
+        worker_faults:
+          type: integer
+          description: worker 循环捕获到的致命异常累计次数
 
     Fault:
       type: object

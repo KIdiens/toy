@@ -22,6 +22,7 @@ from host.config.settings import load_settings
 from host.web.app import create_app
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+WORKER_JOIN_TIMEOUT_S = 2.0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -59,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     context = build_context(settings, simulate=args.simulate)
     stop_event = threading.Event()
     context.worker_running = True
+    # 领域线程（net / audio / tick）必须与状态机 worker 一同装配，否则 NET_REQUEST 等
+    # 命令无人消费 → 按键对话卡在 THINKING（P0-1）。
+    context.start_workers()
     worker = threading.Thread(target=context.run_forever, args=(stop_event,),
                               name="host-worker", daemon=True)
     worker.start()
@@ -70,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         logger.info("主机服务停止，开始收尾")
         stop_event.set()
-        context.close()
+        context.close()  # 内含 stop_workers()：停领域线程并 join
+        worker.join(timeout=WORKER_JOIN_TIMEOUT_S)
     return 0
 
 
