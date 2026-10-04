@@ -96,12 +96,25 @@ def test_stable_window_boundary_200ms():
     assert "OK ARM 1" in at_201
 
 
-def test_arm_sscanf_requires_no_trailing_token():
-    """sscanf("ARM %d %c")==1：尾随 token（含空格）落到 ERR COMMAND。"""
+def test_arm_sscanf_trailing_whitespace_is_accepted():
+    """sscanf("ARM %d %c")==1：**尾随空白被接受**（%c 前的空白指令吃掉它后无字符可读）。
+
+    本条此前断言 ``"ARM 1 "`` 应 ``ERR COMMAND``，那是在**保护错误行为**：
+    真实 C 运行时对该输入返回 1，真机因此会 ARM 成功。模拟器若比真机更严，
+    联调期会给出与真机相反的结论。判定基准见 tests/unit/test_review_wire_parity.py
+    （以纯 Python 复刻 sscanf 赋值计数为准，不拿模拟器自己当 oracle）。
+
+    三个方向的基准值：尾随 token -> %c 成功 -> sscanf 返回 2 -> 拒绝；
+    尾随空白 -> %c 失败但 %d 已赋值 -> sscanf 返回 1 -> **接受**；
+    「ARM1」-> 格式串空白匹配零个 -> 仍返回 1 -> 接受。
+    """
     controller, clock = _booted()
     assert "ERR COMMAND" in _drive(controller, clock, "ARM 1 2", 300)
-    assert "ERR COMMAND" in _drive(controller, clock, "ARM 1 ", 320)
-    assert "OK ARM 1" in _drive(controller, clock, "ARM1", 340)  # 格式串空白匹配零个
+    assert "OK ARM 1" in _drive(controller, clock, "ARM 1 ", 320)
+
+    # 「ARM1」需用独立控制器：上一条已 ARM 成功，再 ARM 会命中 ERR ALREADY_ARMED
+    other, other_clock = _booted()
+    assert "OK ARM 1" in _drive(other, other_clock, "ARM1", 340)       # 格式串空白匹配零个
 
 
 def test_previous_seq_is_not_reset_by_stop_but_rearm_resets_via_have_seq():

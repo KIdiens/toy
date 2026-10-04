@@ -39,19 +39,61 @@ MAX_LINE_CHARS = BUFFER_SIZE - 1
 BYTES_PER_CYCLE = 64
 SEQ_MASK = 0xFFFFFFFF
 
-# 与固件 sscanf 等价的解析（%d 之前的格式串空白匹配零或多个空白）。
-# 关键细节：``sscanf("ARM %d %c") == 1`` 要求 **无尾随字符** —— 任何尾随字符
-# （包括空格）都会让赋值字段数变成 2，从而落入 FRAME 分支失败 → ERR COMMAND。
-_ARM_RE = re.compile(r"^ARM\s*([+-]?\d+)$")
+# 与固件 sscanf 等价的解析。**判定基准是 C 的格式串语义，不是"看起来像"**：
+#
+# C 里格式串的空白指令匹配**零个或多个**空白，且 ``%c`` 之前的空白指令会吃掉
+# 尾随空白 —— 于是 ``"ARM 1 "`` 的 ``%c`` 无字符可读、输入失败，``sscanf`` 返回 1
+# （只有 ``%d`` 完成赋值）=> **真机接受**。这一点必须与固件一致。
+#
+# 同理 ``%c`` 不跳空白但也不能凭空接受：只有当 ``%d`` 之后**确实还有非空白字符**
+# 时它才成功（返回 2），否则整条命令落到 ERR COMMAND。
+#
+# 依据是 C 标准 7.21.6.2 的赋值计数规则，**非**本机 C 编译器实测（工程机无 gcc/msvc）。
+# 真机复核方式：烧录后发一字节 ``ARM 1\r``，固件应回 ``OK``（与本模块判定一致）。
+# 详见 tests/unit/test_review_wire_parity.py 文件头的置信度分级。
+#
+# 用 ``[ \t]*``（而非 ``\s*``）显式限定"空白指令只吃水平空白"：``\s`` 会额外吃掉
+# ``\n``，而本模块的 feed() 已按 ``\n`` 断行，混入换行只会造成误判。
+_ARM_SPACE = r"[ \t]*"
+_INT = r"[+-]?[0-9]+"
+
+# 每个数字字段后必须紧跟"行尾或水平空白"：``(?![0-9])`` 保证不会在数字中间截断
+# （旧正则在字段数不足时会让 \d+ 从 "1500" 的 "150" 处起始，凑出 [150,0] 这类假数据），
+# 随后的 ``[ \t]*`` 把该处水平空白吃掉，交给 _trailing_is_clean 判定 %c。
+_ARM_RE = re.compile(rf"^ARM{_ARM_SPACE}({_INT})(?![0-9])")
 _FRAME_RE = re.compile(
-    r"^FRAME\s*([+-]?\d+)\s*([+-]?\d+)\s*([+-]?\d+)\s*([+-]?\d+)\s*([+-]?\d+)$"
+    rf"^FRAME{_ARM_SPACE}({_INT})(?![0-9]){_ARM_SPACE}"
+    rf"({_INT})(?![0-9]){_ARM_SPACE}"
+    rf"({_INT})(?![0-9]){_ARM_SPACE}"
+    rf"({_INT})(?![0-9]){_ARM_SPACE}"
+    rf"({_INT})(?![0-9])"
 )
 
 
+_WS_CHARS = " \t"
+
+
+def _trailing_is_clean(line: str, end: int) -> bool:
+    """字段读完位置之后只允许水平空白或行尾。
+
+    这是 ``sscanf(...) == N`` 的最后一环：``%c`` 成功则返回 N+1（命令被拒），
+    失败（只剩空白或行尾）才返回 N（命令被接受）。
+    """
+    return line[end:].strip(_WS_CHARS) == ""
+
+
 def parse_arm(line: str) -> int | None:
-    """等价 ``sscanf(line, "ARM %d %c") == 1``；命中返回角色号，否则 ``None``。"""
+    """等价 ``sscanf(line, "ARM %d %c") == 1``；命中返回角色号，否则 ``None``。
+
+    尾随空白（``"ARM 1 "``）**必须接受**：``%c`` 前的空白指令吃掉它之后无字符可读，
+    ``sscanf`` 返回 1。尾随非空白字符（``"ARM 1 2"``）必须拒绝：``%c`` 成功，返回 2。
+    """
     match = _ARM_RE.match(line)
-    return int(match.group(1)) if match else None
+    if not match:
+        return None
+    if not _trailing_is_clean(line, match.end()):
+        return None  # %c 读到了字符 -> 返回 2 -> 落到 ERR COMMAND
+    return int(match.group(1))
 
 
 def parse_frame(line: str) -> tuple[int, list[int]] | None:
@@ -59,6 +101,8 @@ def parse_frame(line: str) -> tuple[int, list[int]] | None:
     match = _FRAME_RE.match(line)
     if not match:
         return None
+    if not _trailing_is_clean(line, match.end()):
+        return None  # %c 成功 -> 返回 6 -> ERR COMMAND
     seq = int(match.group(1)) & SEQ_MASK  # %lu 语义：32 位无符号回绕
     values = [int(match.group(index)) for index in range(2, 6)]
     return seq, values
