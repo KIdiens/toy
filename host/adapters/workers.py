@@ -18,6 +18,8 @@ from host.core.events import Command, CommandKind, Event, EventKind
 from host.core.state_machine import State
 
 DOMAIN_POLL_S = 0.05  # 领域队列取件超时（让线程定期回到 stop 判定）
+NET_ERROR_BACKOFF_S = 0.2  # net 线程异常后的退避，避免底层持续故障时空转打满 CPU
+AUDIO_ERROR_BACKOFF_S = 0.2  # audio 线程同理
 TICK_INTERVAL_S = 0.5
 RECORD_POLL_S = 0.02
 REPLY_WAIT_S = 16.0  # 等录音完成的兜底上限（> 单次录制上限）
@@ -62,13 +64,24 @@ class WorkersMixin:
 
     # ---------- net worker ----------
     def _net_loop(self, stop_event: threading.Event) -> None:
+        """net 队列消费者。
+
+        **外层 try/except 是硬要求**（P0-2 同源纪律）：``net_queue.get()`` 自身抛错、
+        或 ``_handle_net_request`` 之外的代码抛错（宿主被换掉、总线已关闭等）时，
+        本线程会**直接静默死亡**——而 net 一死，NET_REQUEST 再无人消费，按对话键
+        永久停在 THINKING，正是 P0-1 修掉的症状。任何异常都必须记日志并继续循环。
+        """
         while not stop_event.is_set():
-            command = self.net_queue.get(timeout=DOMAIN_POLL_S)
-            if command is None or command.kind is not CommandKind.NET_REQUEST:
-                if command is not None:
-                    self._warn_unhandled("net", command)
-                continue
-            self._handle_net_request(command)
+            try:
+                command = self.net_queue.get(timeout=DOMAIN_POLL_S)
+                if command is None or command.kind is not CommandKind.NET_REQUEST:
+                    if command is not None:
+                        self._warn_unhandled("net", command)
+                    continue
+                self._handle_net_request(command)
+            except Exception as exc:  # noqa: BLE001  线程存活优先于单次失败
+                self._on_worker_error("net", exc)
+                stop_event.wait(NET_ERROR_BACKOFF_S)
 
     def _handle_net_request(self, command: Command) -> None:
         generation = command.generation
@@ -120,14 +133,16 @@ class WorkersMixin:
 
     # ---------- audio worker ----------
     def _audio_loop(self, stop_event: threading.Event) -> None:
+        """audio 队列消费者；与 net 同纪律，取件本身也必须在兜底内。"""
         while not stop_event.is_set():
-            command = self.audio_queue.get(timeout=DOMAIN_POLL_S)
-            if command is None:
-                continue
             try:
+                command = self.audio_queue.get(timeout=DOMAIN_POLL_S)
+                if command is None:
+                    continue
                 self._handle_audio_command(command)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001  线程存活优先于单次失败
                 self._on_worker_error("audio", exc)
+                stop_event.wait(AUDIO_ERROR_BACKOFF_S)
 
     def _handle_audio_command(self, command: Command) -> None:
         kind = command.kind
@@ -191,6 +206,7 @@ class WorkersMixin:
                 self._enforce_recording_timeout()
             except Exception as exc:  # noqa: BLE001
                 self._on_worker_error("tick", exc)
+            # 固定节拍：异常时也照常等待，避免"每轮都失败 → 空转打满 CPU"。
             stop_event.wait(TICK_INTERVAL_S)
 
     def _enforce_recording_timeout(self) -> None:

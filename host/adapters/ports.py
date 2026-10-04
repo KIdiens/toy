@@ -109,10 +109,28 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         }
 
     def worker_alive(self) -> bool:
-        """存活探针：worker 心跳是否新鲜（线程静默死亡时可被 /status 观察到，P0-2）。"""
-        if self.worker_heartbeat_ms is None:
+        """存活探针：领域线程（net/audio/tick）逐个健在，且 motion 心跳新鲜。
+
+        为什么不能只看心跳：``worker_heartbeat_ms`` 只由 motion worker 写
+        （``execution.run_forever``），三个领域线程全死时心跳依然新鲜，
+        ``/status`` 会返回假的 ``worker_alive: true`` —— 而领域线程一死，
+        按对话键就永久停在 THINKING（P0-1 症状复发）。
+
+        为什么 motion 心跳只作"附加条件"而非"必要条件"：motion worker 由
+        ``main.py`` 单独启动，领域线程先起、心跳后起。只用心跳会在启动窗口内
+        对健康的领域线程误报故障；只查线程又会漏掉 motion 静默死亡。
+        两者都健在才算活——任一维度失效都返回 False，由 /status 如实暴露。
+        """
+        threads = list(getattr(self, "_domain_threads", []) or [])
+        if not threads:
+            return False  # 从未启动：不得报活
+        if not all(getattr(t, "is_alive", lambda: False)() for t in threads):
             return False
-        return (self.clock.now_ms() - self.worker_heartbeat_ms) <= WORKER_LIVENESS_MS
+        heartbeat = self.worker_heartbeat_ms
+        if heartbeat is not None:
+            return (self.clock.now_ms() - heartbeat) <= WORKER_LIVENESS_MS
+        # 心跳尚无（motion worker 未启动或还没跑一轮）：领域线程健在即视为可用。
+        return True
 
     def role_summaries(self) -> list[dict[str, Any]]:
         return self.roles.summaries()
