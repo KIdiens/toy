@@ -44,6 +44,17 @@ def dev_undock(ctx: ContextDep) -> dict[str, Any]:
     return schemas.ok(ctx.inject_undock())
 
 
+@router.post("/dev/dock")
+def dev_dock(ctx: ContextDep) -> dict[str, Any]:
+    """模拟公仔重新插到位 / 急停复位。
+
+    只恢复硬件前置条件，**不解除故障锁定**——仍需调用 ``clear_fault`` 完成确认。
+    与 ``/dev/undock`` 成对，避免「拔出后忘记复位」导致无法自救。
+    """
+    _ensure_sim(ctx)
+    return schemas.ok(ctx.inject_dock())
+
+
 @router.post("/dev/button")
 def dev_button(payload: ButtonRequest, ctx: ContextDep) -> dict[str, Any]:
     """注入一次按键（1=对话 / 2=表演 / 3=音量）。"""

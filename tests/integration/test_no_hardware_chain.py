@@ -150,6 +150,16 @@ def test_full_no_hardware_chain(client: httpx.Client) -> None:
         "request_id": "chain-4", "role_id": 1, "action_id": "wave"})
     assert blocked.status_code == 409
 
+    # 8b) 公仔仍拔出时确认解除必须被拒（否则固件会立刻再跳闸，假可用态）
+    refused = client.post("/api/v1/dev/clear").json()["data"]
+    assert refused["cleared"] is False
+    assert refused["reason"], "拒绝解除必须给出原因，前端要显示给用户"
+    assert client.get("/api/v1/status").json()["data"]["state"] == "FAULT_LOCKED"
+
+    # 8c) 把公仔插回去（只恢复硬件前置条件，**不**自动解除锁定）
+    assert client.post("/api/v1/dev/dock").status_code == 200
+    assert client.get("/api/v1/status").json()["data"]["state"] == "FAULT_LOCKED"
+
     # 9) 人工确认解除 → 回到 IDLE
     cleared = client.post("/api/v1/dev/clear").json()["data"]
     assert cleared["cleared"] is True
