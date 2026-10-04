@@ -66,6 +66,9 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     _router: Any = field(default=None, repr=False)
     _worker_stop: Any = field(default=None, repr=False)
     _domain_threads: list = field(default_factory=list, repr=False)
+    # motion worker（run_forever）由 main.py 单独起线程，必须在此登记引用 ——
+    # 存活探针要靠它判活，见 worker_alive() 的说明。
+    _motion_thread: Any = field(default=None, repr=False)
     worker_heartbeat_ms: int | None = None
     worker_faults: int = 0
     fired_reminders: list = field(default_factory=list)
@@ -109,23 +112,34 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         }
 
     def worker_alive(self) -> bool:
-        """存活探针：领域线程（net/audio/tick）逐个健在，且 motion 心跳新鲜。
+        """存活探针：领域线程（net/audio/tick）**与 motion worker** 逐个健在。
 
         为什么不能只看心跳：``worker_heartbeat_ms`` 只由 motion worker 写
         （``execution.run_forever``），三个领域线程全死时心跳依然新鲜，
         ``/status`` 会返回假的 ``worker_alive: true`` —— 而领域线程一死，
         按对话键就永久停在 THINKING（P0-1 症状复发）。
 
-        为什么 motion 心跳只作"附加条件"而非"必要条件"：motion worker 由
-        ``main.py`` 单独启动，领域线程先起、心跳后起。只用心跳会在启动窗口内
-        对健康的领域线程误报故障；只查线程又会漏掉 motion 静默死亡。
-        两者都健在才算活——任一维度失效都返回 False，由 /status 如实暴露。
+        **为什么心跳不能作为判活依据（曾踩的坑）**：心跳写在 ``run_forever``
+        的 ``while`` 循环**开头**，紧接着 ``pump_once()`` -> ``play_action()``
+        **同步阻塞整个动作时长**（``client.py`` 轮询到末帧保持 150ms）。
+        于是播放期间心跳全程不更新，超过 ``WORKER_LIVENESS_MS``（5s）后
+        ``wave.json``（4000ms 时间轴）这类动作必然让探针在**线程全健在**时
+        返回 False —— 谎报。且 ``TAIL_TIMEOUT_S`` 只管末帧之后的超时，
+        **不限制时间轴本身**，故阻塞时长无固定上界，提高阈值是治标不治本。
+
+        因此判活一律以 ``is_alive()`` 为准：motion 线程由 ``main.py`` 启动后
+        登记到 ``_motion_thread``，与领域线程同源检查。
+        心跳仅在**线程尚未登记**时作为兜底（保留第 2 组"启动窗口不误报"的成果）。
         """
         threads = list(getattr(self, "_domain_threads", []) or [])
         if not threads:
             return False  # 从未启动：不得报活
         if not all(getattr(t, "is_alive", lambda: False)() for t in threads):
             return False
+        motion = getattr(self, "_motion_thread", None)
+        if motion is not None:
+            # 已登记：线程是否健在就是唯一依据，无论心跳多旧（可能正同步播放中）
+            return bool(getattr(motion, "is_alive", lambda: False)())
         heartbeat = self.worker_heartbeat_ms
         if heartbeat is not None:
             return (self.clock.now_ms() - heartbeat) <= WORKER_LIVENESS_MS

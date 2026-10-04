@@ -65,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
     context.start_workers()
     worker = threading.Thread(target=context.run_forever, args=(stop_event,),
                               name="host-worker", daemon=True)
+    # 必须登记引用：存活探针（context.worker_alive）靠 is_alive() 判活，
+    # 拿不到引用就只能退回心跳判定 —— 而心跳在同步播放期间不更新，
+    # 会把"正在播放"误报成"motion worker 已死"。
+    context.register_motion_thread(worker)
     worker.start()
     logger.info("主机服务就绪：http://%s:%s（simulate=%s，AI=%s）",
                 settings.web.host, settings.web.port, context.simulate, settings.ai.provider)

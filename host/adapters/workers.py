@@ -54,6 +54,17 @@ class WorkersMixin:
             thread.start()
             self._domain_threads.append(thread)
 
+    def register_motion_thread(self, thread) -> None:
+        """登记 motion worker（``run_forever``）线程引用，供存活探针判活。
+
+        为什么不自动起：这个线程由 ``main.py`` 与 uvicorn 主循环一起组装
+        （它需要 stop_event 与生命周期收尾），不归 ``start_workers`` 管。
+        但**必须**登记：不登记的话 ``worker_alive`` 只能退回心跳判定，而心跳
+        写在 ``run_forever`` 循环开头、播放期间全程不更新，会把「正在播放」
+        误报成「motion worker 已死」（wave.json 4000ms 必然越过 5s 阈值）。
+        """
+        self._motion_thread = thread
+
     def stop_workers(self) -> None:
         """请求停止并 join 全部领域线程（幂等）。"""
         if self._worker_stop is not None:
