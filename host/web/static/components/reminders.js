@@ -144,10 +144,13 @@ class ReminderList extends Base {
     return `<div role="list" aria-label="提醒列表">${head}<div class="rows">${rows}</div></div>`;
   }
   mounted() {
-    const rows = this.$$('reminder-row');
-    (this._items || []).forEach((r, i) => { if (rows[i]) rows[i].reminder = r; });
     this.addEventListener('row-toggle', (e) => { e.stopPropagation(); emit(this, 'row-toggle', e.detail); });
     this.addEventListener('row-cancel', (e) => { e.stopPropagation(); emit(this, 'row-cancel', e.detail); });
+  }
+  /** 每次重绘后按位置回填行数据（子节点是 innerHTML 重建的，mounted 只跑一次）。 */
+  syncRows() {
+    const rows = this.$$('reminder-row');
+    (this._items || []).forEach((r, i) => { if (rows[i]) rows[i].reminder = r; });
   }
 }
 define('reminder-list', ReminderList);

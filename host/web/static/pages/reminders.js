@@ -73,6 +73,10 @@ export default async function boot() {
     try { roles = await api.listRoles() || []; } catch { roles = []; }
     const vs = form.querySelector('voice-select');
     if (vs) { vs.roles = roles; if (roles[0]) vs.setAttribute('role-id', String(roles[0].role_id)); }
+    // 必须先解除 busy 再塞数据：reminder-list 的模板在 busy==='true' 时只返回骨架，
+    // 此时写 items 不会产生任何行。顺序反过来列表会永远停在骨架屏。
+    list.setAttribute('busy', 'false');
+    list.items = items;
     render();
   }
 

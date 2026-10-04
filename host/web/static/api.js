@@ -114,6 +114,8 @@ export const listFeatures = () => request('GET', '/features');
 export const listMemories = (q) => request('GET', '/memories', { query: q });
 export const listReminders = (q) => request('GET', '/reminders', { query: q });
 export const getSettings = () => request('GET', '/settings');
+/** 当前角色可编辑的动作文件列表；`active` 标记当前编辑指针（只读端点，无 query 参数）。 */
+export const listActionFiles = () => request('GET', '/actions/files');
 
 /* ------------------------------------------------------------------ 写操作 */
 export const setActiveRole = (role_id) =>

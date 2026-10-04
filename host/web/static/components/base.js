@@ -68,8 +68,17 @@ export class Base extends HTMLElement {
     // mounted 只跑一次（事件一律用 this.on 委托，天然抵消重绘）；
     // updated 在每次重绘后跑（聚焦、回填 <select> 选项、同步 dialog 开合等副作用）。
     if (first) { this._mounted = true; this.mounted?.(); }
+    this.syncRows?.();
     this.updated?.();
   }
+  /**
+   * 每次重绘后把数据注入新建出来的子元素。
+   *
+   * 为什么不能放在 mounted()：自定义元素每次 render 都用 innerHTML 重建子节点，
+   * 而 mounted 只在首次执行一次——于是「首次在 busy 骨架态挂载、之后才出行」的场景下，
+   * 行元素永远拿不到数据（表现为内容静默显示为 "—"）。子类实现此钩子即可。
+   */
+  syncRows() {}
   template() { return ''; }
   /** 事件委托：一次绑定，避免重绘后监听泄漏 */
   on(type, selector, handler) { this.addEventListener(type, (e) => {

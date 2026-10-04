@@ -30,7 +30,7 @@ export default async function boot() {
     action: makeEmptyAction(1, 'blank'), selected: 1, playhead: 0,
     playing: false, looping: false, muted: [false, false, false, false], offset: 0,
     roles: [], status: null, online: false, pendingPack: null, wave: waveform(7, 110),
-    fileList: [],   // 真实动作文件来源；契约未提供该端点前恒为空（绝不构造假文件名）
+    fileList: [],   // 真实动作文件来源；由 GET /actions/files 填充（绝不构造假文件名）
   };
 
   const duration = () => Math.max(1, S.action.frames[S.action.frames.length - 1]?.t_ms || 6000);
@@ -67,14 +67,23 @@ export default async function boot() {
     }));
   }
 
-  /* 契约（Spec §5）无「列出动作文件」端点 => 绝不构造假文件名（如 wave.json）凑数，
-     那会让人误以为真实存在。有真实数据用真实数据；无数据源显示空态并说明原因；
-     M11 补端点后只需在此填充 S.fileList。 */
+  /* 动作文件列表来自 GET /actions/files（后端只读端点，返回当前角色的真实文件名 +
+     active 指针）。取不到就显示空态并说明原因，绝不构造假文件名凑数。 */
   function renderFiles() {
     files.files = S.fileList || [];
-    files.setAttribute('empty-hint', S.online
-      ? '本机服务动作文件列表接口尚未提供；可用下方「新建」「导入」在本地编辑。'
-      : '离线预演模式：未连接后端服务，动作文件列表不可用；可用下方「新建」「导入」在本地编辑。');
+    files.setAttribute('empty-hint', S.fileList && S.fileList.length
+      ? '点击文件切换到对应动作；新建与导入仍在本地编辑，未写入磁盘。'
+      : (S.online
+        ? '本机服务未返回动作文件（该角色可能还没有 .json 动作）；可用下方「新建」「导入」在本地编辑。'
+        : '离线预演模式：未连接后端服务，动作文件列表不可用；可用下方「新建」「导入」在本地编辑。'));
+  }
+
+  async function loadActionFiles() {
+    try {
+      const list = await api.listActionFiles();
+      S.fileList = Array.isArray(list) ? list : [];
+    } catch { S.fileList = []; }
+    renderFiles();
   }
 
   function renderRight(result) {
@@ -265,6 +274,7 @@ export default async function boot() {
       S.action.role_id = e.detail.role_id;
       roleSel.setAttribute('config-version', e.detail.config_version || '');
       toast('success', `已切换到角色 ${e.detail.role_id}`);
+      await loadActionFiles();   // 动作文件按角色隔离，切换后必须重取
     } catch (err) {
       roleSel.setAttribute('role-id', String(prev));
       if (err instanceof api.ConflictError) toast('error', `${err.message}（例如正在播放，已还原选择）`);
@@ -279,7 +289,7 @@ export default async function boot() {
     conn.setAttribute('state', S.online ? connStateFromStatus(S.status) : 'offline');
     guard.setAttribute('disabled-reason', S.online ? '' : '未连接设备');
     offlineBanner.classList.toggle('hidden', S.online);
-    renderFiles();
+    if (S.online) await loadActionFiles(); else renderFiles();
     renderAll();
   }
   const events = api.openEvents({ onEvent(evt) {

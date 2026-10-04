@@ -89,9 +89,12 @@ class MemoryList extends Base {
     return `<div role="list" aria-label="记忆列表">${head}<div class="rows">${rows}</div></div>`;
   }
   mounted() {
+    this.addEventListener('row-delete', (e) => { e.stopPropagation(); emit(this, 'row-delete', e.detail); });
+  }
+  /** 每次重绘后按位置回填行数据（子节点是 innerHTML 重建的，mounted 只跑一次）。 */
+  syncRows() {
     const rows = this.$$('memory-row');
     (this._items || []).forEach((m, i) => { if (rows[i]) rows[i].memory = m; });
-    this.addEventListener('row-delete', (e) => { e.stopPropagation(); emit(this, 'row-delete', e.detail); });
   }
 }
 define('memory-list', MemoryList);
