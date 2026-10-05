@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from host.core.events import Command, CommandKind, Event, EventKind
 from host.core.state_machine import (
@@ -48,6 +49,18 @@ EXIT_COMMANDS: dict[State, tuple[CommandKind, ...]] = {
 
 Dispatcher = Callable[["Engine", Event], list[Command]]
 
+# 表演键的**语义**标记：由 core 写进 PLAY_ACTION 的 payload，adapter 据此解析出真实动作。
+#
+# 为什么标记在 core、解析在 adapter：core 是确定性单线程 actor，**不做任何 I/O**
+# （模块 docstring 与架构 §3），既不 import `roles` 也不碰文件系统，拿不到当前
+# role_id 与动作 JSON 本体。因此 core 只能表达「这一下按的是表演键，语义是打招呼」，
+# 由持有 ``roles`` 的 adapter 把它翻译成 ``{"action": <动作本体>, "role_id": ...}``。
+# 这与音量键的 ``VOLUME_STEP`` 是同一形状的分工：core 表达意图，adapters 执行效果。
+#
+# 载荷里刻意**不含**具体动作 id：动作从哪个文件解析属于装配知识（角色包可换人），
+# 写进 core 会让它依赖 content 布局。
+GREET_INTENT = "greet"
+
 # 「跨会话的异步结果」类事件：由领域线程异步产生、且**可能跨越一次取消/换角色**才回到
 # 核心，因此必须核对 ``generation``，不符一律丢弃（AC-15）。这条边界两侧都各有一个反例，
 # 既不能放宽也不能收紧（回归见 tests/unit/test_generation_guard.py）：
@@ -84,6 +97,11 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
                 Command(kind=CommandKind.VOLUME_STEP, payload=dict(event.payload or {}),
                         generation=machine.generation)
             )
+        if action == Trigger.PERFORM_PRESS.value:
+            # 表演键 = 打招呼（产品定义）。此前 PLAY_ACTION 带着空载荷下发，
+            # adapter 只能按「无动作」收尾，于是按下去是一个动作都不做的状态往返。
+            # 这里只打语义标记，动作本体由 adapter 侧解析（见 GREET_INTENT 的说明）。
+            commands = [_mark_greet(c) for c in commands]
         return commands
     if kind in (EventKind.MCU_FAULT, EventKind.MCU_ERROR):
         return engine.apply(Trigger.SAFETY_TRIP, event.payload, event.generation)
@@ -98,6 +116,18 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
     if trigger is None:
         return []
     return engine.apply(trigger, event.payload, event.generation)
+
+
+def _mark_greet(command: Command) -> Command:
+    """给表演键下发的 ``PLAY_ACTION`` 打上打招呼语义标记（其余命令原样返回）。
+
+    只改载荷、不改代数与种类：``_run_play`` 的迟到丢弃（``ports.play_action`` 走的是
+    同一份判定）仍按 ``generation`` 生效。
+    """
+    if command.kind is not CommandKind.PLAY_ACTION:
+        return command
+    return replace(command, payload={**dict(command.payload or {}),
+                                     "perform_intent": GREET_INTENT})
 
 
 class Engine:

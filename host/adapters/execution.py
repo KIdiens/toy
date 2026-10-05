@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
+from host.core.engine import GREET_INTENT
 from host.core.errors import (
     ClarifyError,
     ConflictError,
@@ -32,6 +35,14 @@ MOTION_SILENT_KINDS: frozenset[CommandKind] = frozenset({
     CommandKind.STOP,
     CommandKind.STOP_MOTION,
 })
+
+# 物理表演键默认播放的动作 id（物理表演键 = 打招呼）。
+#
+# **不复用 wave/nod 的实测依据**：`content/roles/*/role.json` 的 actions 白名单里
+# wave 只有 role 1/2、nod 只有 role 1/3 —— 没有任何一个现有 id 被三个角色共享，
+# 复用单个现有 id 必然有角色在自己的包里找不到动作。新建 greet 后三个角色各自
+# 都有同名同义的动作，按键行为不再随角色包内容漂移。
+GREET_ACTION_ID = "greet"
 
 
 class ExecutionMixin:
@@ -63,12 +74,25 @@ class ExecutionMixin:
             return False
         if command.kind is CommandKind.PLAY_ACTION:
             if not command.payload.get("action"):
-                # 物理表演键下发的 PLAY_ACTION **不携带动作载荷**（按键路径没有「选动作」这一步），
-                # 按 `_finish_without_motion` 的既定语义直接收尾回 IDLE。
-                # **绝不能走下面的 motion_busy 守卫**：按键路径从不置 motion_busy，走守卫会被
-                # 当作陈旧命令丢弃 → `PERFORM_DONE` 永不产生 → 设备永久卡在 PERFORMING。
-                self._run_play(command)
-                return True
+                # 物理表演键路径：core 只打了 ``perform_intent=greet`` 语义标记，
+                # 动作本体在这里（持有 roles 的一侧）解析。
+                #
+                # 解析不出来（角色没装 / 动作包缺 greet / 文件非法）时**保持原语义**：
+                # 按 ``_finish_without_motion`` 收尾回 IDLE，不动硬件。
+                resolved = self._resolve_greet(command)
+                if resolved is None:
+                    self._run_play(command)
+                    return True
+                command = resolved
+                # **必须在下面的守卫之前置位**：按键路径没有 ``ports.play_action``
+                # 那种「入队即置忙」的入口，若不在此置 ``motion_busy``，紧跟其后的
+                # 守卫会把它当成「已被 stop_action 替换的陈旧命令」丢弃 →
+                # PERFORM_DONE 永不产生 → 设备永久卡在 PERFORMING。
+                with self._lock:
+                    self.motion_busy = True
+                    self.action_progress = {
+                        "action_id": GREET_ACTION_ID, "seq": 0, "progress_ms": 0,
+                    }
             with self._lock:
                 if not self.motion_busy:
                     return True  # 已被 stop/替换：丢弃陈旧运动命令，不移动硬件
@@ -79,6 +103,19 @@ class ExecutionMixin:
                 self.log.warning("[motion worker] 收到未处理命令 %s，已丢弃",
                                  command.kind.value)
         return True
+
+    def _resolve_greet(self, command: Command) -> Command | None:
+        """把带 ``perform_intent`` 标记的 PLAY_ACTION 补全成可直接播放的载荷。
+
+        非打招呼意图（当前无其它意图）或解析失败，一律返回 ``None``，由调用方
+        沿用「空载荷 → 不动硬件直接收尾」的既有语义。
+        """
+        if command.payload.get("perform_intent") != GREET_INTENT:
+            return None
+        payload = self.resolve_greet_action()   # 宿主（AppContext）提供
+        if payload is None:
+            return None
+        return replace(command, payload={**dict(command.payload or {}), **payload})
 
     def _run_play(self, command: Command) -> None:
         """在工作线程执行一个动作；长调用不持锁，结果回写时再取锁。"""

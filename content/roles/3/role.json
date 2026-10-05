@@ -9,5 +9,5 @@
   "axes": ["左臂", "右臂", "头部左右", "腰部左右"],
   "tts_voice": "Serena",
   "language": "zh",
-  "actions": ["nod"]
+  "actions": ["nod", "greet"]
 }

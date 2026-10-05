@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from host.adapters.execution import ExecutionMixin
+from host.adapters.execution import GREET_ACTION_ID, ExecutionMixin
 from host.adapters.injection import InjectionMixin
 from host.adapters.services import StorageFacade
 from host.adapters.workers import WorkersMixin
@@ -169,6 +169,42 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         except (ValueError, TypeError) as exc:
             return {"valid": False, "errors": [{"path": "action", "message": str(exc)}]}
         return {"valid": True, "errors": []}
+
+    def resolve_greet_action(self) -> dict[str, Any] | None:
+        """把 core 打下的 ``greet`` 语义解析成当前角色的真实动作载荷。
+
+        与 :meth:`play_action` 同源（``role.json`` 白名单 → ``actions/greet.json``
+        → ``validate_action``），只是入口不同：这里没有请求方，来源是物理表演键。
+
+        **任何一步不成立都返回 ``None``，绝不抛异常**：按键路径没有 409 入口，
+        动作包缺失或非法若冒泡成异常，会被 ``_run_play`` 归类为 SAFETY_TRIP →
+        设备进故障锁定（表现成「玩具坏了」），而实际只是内容问题。返回 ``None``
+        让调用方按「本轮无动作」收尾回 IDLE，与既有空载荷语义一致。
+        """
+        active = self.roles.active_role_id
+        if active is None:
+            self._warn_greet_unresolved("未加载任何角色")
+            return None
+        path = self.roles.action_path(active, GREET_ACTION_ID)
+        if path is None:
+            self._warn_greet_unresolved(f"角色 {active} 的动作包缺少 {GREET_ACTION_ID}")
+            return None
+        try:
+            action = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            self._warn_greet_unresolved(f"动作文件不可读: {path} ({exc})")
+            return None
+        verdict = self.validate_action(action)
+        if not verdict["valid"]:
+            self._warn_greet_unresolved(f"动作文件非法: {verdict['errors']}")
+            return None
+        self.roles.set_current_action(GREET_ACTION_ID)
+        return {"action": action, "role_id": int(active), "action_id": GREET_ACTION_ID}
+
+    def _warn_greet_unresolved(self, reason: str) -> None:
+        """解析失败必须**可见**：否则表现为「按了没反应」，排障无从下手。"""
+        if self.log is not None:
+            self.log.warning("表演键打招呼动作未解析，本轮只做状态收尾：%s", reason)
 
     def play_action(self, *, role_id: int, action_id: str,
                     action_version: str | None = None,

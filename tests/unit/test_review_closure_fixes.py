@@ -31,7 +31,13 @@ from tests.support import TOY_ROOT
 
 
 def _context(tmp_path: Path, name: str = "toy.sqlite3", *, root: Path | None = None):
-    settings = load_settings({"DB_PATH": str(tmp_path / name), "MOTION_BOOT_WAIT_S": "0.05"})
+    # boot_wait 必须**盖过固件的角色稳定期**：``sim/controller.py`` 要求角色连续稳定
+    # ``STABLE_MS=200`` 才允许 ARM，而 ``MotionClient.play`` 只推进 boot_wait_s。
+    # 原先这里是 0.05，在「表演键真的驱动硬件」之前无所谓（动作根本不播）；
+    # 表演键接通后 press_button(2) 会真的走 ARM 前置检查，0.05 < 200ms 必然
+    # InterlockError → SAFETY_TRIP → FAULT_LOCKED，把本例的断言带歪。
+    # 0.5 既满足稳定期，又比真机默认的 2.0 短，让用例不必真等两秒。
+    settings = load_settings({"DB_PATH": str(tmp_path / name), "MOTION_BOOT_WAIT_S": "0.5"})
     return build_context(settings, simulate=True, root=root or TOY_ROOT)
 
 
