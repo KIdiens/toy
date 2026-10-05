@@ -2,7 +2,10 @@
 import os
 import re
 
-ROOT = r"F:/AI智能底座玩具/toy"
+# 从本文件位置推导工程根（与 tests/support.py 的 TOY_ROOT 同一约定）。
+# 不得写死"F:/AI智能底座玩具/toy"：该绝对路径在 Linux CI / 其它机器上不存在，
+# os.walk 会静默返回空集，本脚本仍打印一堆 OK —— 比直接报错更危险的假绿。
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC = os.path.join(ROOT, "host/web/static")
 TOKENS = os.path.join(ROOT, "host/web/design/design-tokens.css")
 FIXTURE = os.path.join(ROOT, "tests/fixtures/lucide-1.47.0-icon-ids.txt")

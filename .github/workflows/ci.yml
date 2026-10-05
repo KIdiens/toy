@@ -1,0 +1,105 @@
+# 门禁：lint + 全量测试（含 tests/frontend 的 Node 回归脚本）。
+#
+# 为什么必须存在这个工作流：tests/frontend/verify_*.mjs 共 400+ 行前端断言
+# （组件渲染 + F1~F4 缺陷回归）长期不在 pytest 收集范围内
+# （实测 `pytest tests/frontend` → EXIT=5 零收集），CI 只跑 pytest 等于零覆盖。
+# 现已由 tests/frontend/test_frontend_js.py 包装进 `python -m pytest` 单命令口径。
+#
+# 为什么矩阵跑 Windows + Ubuntu：这些脚本用import.meta.url + 动态 import
+# +路径拼接加载 host/web/static 下的真ESM，是跨平台路径问题的重灾区；
+# 只测一个平台等于没测（Windows 大小写不敏感 / 路径分隔符，Ubuntu 两者都严格）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # 手动触发：本地复现门禁用，不必等push。
+  workflow_dispatch:
+
+# 同一 PR 的后续 push 取消在跑的任务：新提交必然包含全部检查内容，
+# 避免"别每次 push 都跑三遍"。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      # 不设fail-fast: false —— 任一平台红了就该停下，避免烧掉另一平台的配额。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Python ----
+      # 显式钉版本，不用 latest：pyproject 要求 >=3.11，classifier 覆盖 3.11~3.13。
+      # 3.12 为中间档，矩阵里跑它以发现语法/弃用差异。
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'pyproject.toml'
+
+      # -B：不写 .pyc（容器/CI 里是纯噪声，且污染工作树）。
+      # pip 缓存由 setup-python 的 cache: pip 提供。
+      # dev extra 含 pytest + ruff（pyproject [project.optional-dependencies].dev）。
+      # 注意：仓库无 requirements*.txt，依赖唯一来源是 pyproject.toml。
+      - name: Install project (editable, with dev extra)
+        run: |
+          python -B -m pip install --upgrade pip
+          python -B -m pip install -e ".[dev]"
+
+      # ---- Node ----
+      # 只为跑 tests/frontend/*.mjs，不需要 npm install（仓库无 package.json /
+      # 无 node_modules，属ADR-007「前端无构建链」：原生 ES module 直接给浏览器加载）。
+      # 20.x 是 LTS 且覆盖脚本用到的语法（顶层 await / ESM / ||=）。
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Show resolved toolchain versions
+        run: |
+          python --version
+          python -m ruff --version
+          node --version
+
+      # ---- Lint ----
+      # 只对 git 跟踪的文件生效（等价于仓库级干净基线）。
+      - name: Lint (ruff)
+        run: python -B -m ruff check .
+
+      # ---- Tests ----
+      # 单命令口径：Python 1132 个用例 + tests/frontend 包装的 Node 脚本。
+      # Node 缺失时包装器 fail（非 skip）并给出修复指引，不会假绿。
+      # -p no:cacheprovider 避免残留 .pytest_cache；--basetemp 显式指定，
+      # 因为 pytest 建 basetemp 不创建父目录（data/ 等目录须已在库内，见 .gitkeep）。
+      - name: Test (pytest, includes frontend Node regressions)
+        run: >
+          python -B -m pytest
+          -p no:cacheprovider
+          --basetemp="${RUNNER_TEMP}/pytest-of-${GITHUB_RUN_ID}"
+
+      # ---- 前端测试单独再跑一遍（定位用） ----
+      # 不是重复门禁：上面已含它。这里单独跑是为了让 Actions 日志里直接出现
+      # 每个 .mjs 的 PASS 明细与退出码，失败时不必回捞pytest 报告。
+      # -rA 打印所有用例名，--tb=short 保留 node 栈的定位信息。
+      - name: Frontend Node regressions (verbose, for log triage)
+        run: >
+          python -B -m pytest tests/frontend
+          -p no:cacheprovider
+          -v -rA --tb=short
+          --basetemp="${RUNNER_TEMP}/pytest-fe-of-${GITHUB_RUN_ID}"

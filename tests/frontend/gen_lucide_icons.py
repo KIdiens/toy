@@ -7,7 +7,9 @@ import os
 import sys
 import urllib.request
 
-ROOT = r"F:/AI智能底座玩具/toy"
+# 从本文件位置推导工程根（与 tests/support.py 的 TOY_ROOT 同一约定）。
+# 不得写死 "F:/AI智能底座玩具/toy"：该绝对路径在 Linux CI 上不存在。
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FIXTURE = os.path.join(ROOT, "tests/fixtures/lucide-1.47.0-icon-ids.txt")
 OUT = os.path.join(ROOT, "host/web/static/vendor/lucide-icons.js")
 BASE = "https://unpkg.com/lucide-static@1.47.0/icons/{}.svg"

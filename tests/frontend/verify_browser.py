@@ -24,21 +24,49 @@ import http.server
 import json
 import os
 import re
+import shutil
 import socketserver
 import subprocess
 import sys
 import threading
 
-ROOT = r"F:/AI智能底座玩具/toy"
+# 从本文件位置推导工程根（与 tests/support.py 的 TOY_ROOT 同一约定）。
+# 不得写死 "F:/AI智能底座玩具/toy"：该绝对路径在 Linux CI / 其它机器上不存在。
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC = os.path.join(ROOT, "host/web/static")
 DESIGN = os.path.join(ROOT, "host/web/design")
 SHOTS = os.path.join(ROOT, "_verify_shots")
 PORT = 8765
-CHROME = next((p for p in [
-    r"C:/Program Files/Google/Chrome/Application/chrome.exe",
-    r"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-    r"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-] if os.path.isfile(p)), None)
+# 浏览器候选表按平台给：Linux 上没有 .exe 的 C:/ 路径，写死会在 Ubuntu 恒为 None。
+# 本脚本是 dev-time 手工验证，不进 CI（CI 不装浏览器，见 ci.yml注释）。
+_CANDIDATES = {
+    "win32": [
+        r"C:/Program Files/Google/Chrome/Application/chrome.exe",
+        r"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        r"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    ],
+    "darwin": [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ],
+    "linux": [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/microsoft-edge",
+    ],
+}
+CHROME = next(
+    (p for p in _CANDIDATES.get(sys.platform, []) if os.path.isfile(p)),
+    None,
+)
+if CHROME is None:  # 兜底到 PATH，避免"装了 Chrome 但因路径不同就找不到"
+    CHROME = (
+        shutil.which("google-chrome")
+        or shutil.which("chromium")
+        or shutil.which("microsoft-edge")
+    )
 
 ROUTES = {"/": "index.html", "/editor": "editor.html", "/memories": "memories.html",
           "/reminders": "reminders.html", "/settings": "settings.html"}
@@ -127,6 +155,17 @@ RUNTIME = {
 
 
 def main():
+    if CHROME is None:
+        # 明确报错而非让 subprocess 抛 FileNotFoundError：本脚本是 dev-time 手工
+        # 验证，CI 不装浏览器（见 ci.yml），因此不进 pytest 门禁。
+        print(
+            "未找到 Chrome/Chromium/Edge。本脚本需要浏览器做 --dump-dom 渲染验证，\n"
+            "请安装后重试，或改用无需浏览器的 node 回归脚本：\n"
+            "    node tests/frontend/verify_batch2_fixes.mjs\n"
+            "    node tests/frontend/verify_logic_and_render.mjs",
+            file=sys.stderr,
+        )
+        return 2
     os.makedirs(SHOTS, exist_ok=True)
     srv = socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
