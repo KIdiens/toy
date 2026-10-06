@@ -21,7 +21,7 @@ from typing import Any
 
 from host.core.errors import InterlockError, MotionTimeout, ProtocolError
 from host.motion.timeline import Timeline
-from host.motion.validation import validate
+from host.motion.validation import HIGH, LOW, validate
 
 BOOT_WAIT_S = 2.0
 STATUS_TIMEOUT_S = 2.0
@@ -50,8 +50,17 @@ class MotionClient:
         self.boot_wait_s = boot_wait_s
         self.logger = logger
 
-    def play(self, action: Mapping[str, Any], *, role_id: int | None = None) -> PlayResult:
-        validate(action)
+    def play(self, action: Mapping[str, Any], *, role_id: int | None = None,
+             min_us: int = LOW, max_us: int = HIGH) -> PlayResult:
+        """下发一个动作。
+
+        ``min_us``/``max_us`` 由调用方（持有角色配置的一侧）注入，缺省即固件台架
+        保守区间。**这里不复位成 ``action["role_id"]`` 的限幅**：motion 层不 import
+        ``host.roles``（分层：core/业务不依赖 storage 与内容包），限幅只能由上层传进来。
+        传了就查 —— 这是入口校验之外的**第二道防线**，用于兜住「绕过 ``play_action``
+        直接下发」的路径。
+        """
+        validate(action, min_us=min_us, max_us=max_us)
         expected_role = int(role_id if role_id is not None else action["role_id"])
         link, clock = self.link, self.clock
         try:

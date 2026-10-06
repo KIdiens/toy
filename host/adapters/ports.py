@@ -24,6 +24,7 @@ from host.core.errors import ConflictError, HostError, StorageError
 from host.core.events import CommandKind
 from host.core.state_machine import SessionStateMachine, State, Trigger
 from host.motion.client import MotionClient, PlayResult
+from host.roles.schema import FW_MAX_US, FW_MIN_US
 
 # worker 心跳新鲜度阈值：超过即视为「线程已死」（/status 的 worker_alive 探针）。
 WORKER_LIVENESS_MS = 5000
@@ -161,11 +162,36 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
             return {"role_id": config.role_id, "config_version": config.config_version}
 
     # ---------- 动作校验 / 播放 / 停止 ----------
+    def role_limits(self, role_id: Any) -> tuple[int, int]:
+        """取该角色声明的限幅；取不到时**回落到固件保守区间**而不是报错。
+
+        为什么回落而不是抛异常：限幅校验是**收紧型**加固，作用是拦住越限幅的动作，
+        不该反过来让一个本来能播的动作播不出来（新的拒绝理由 = 新的用户可见故障）。
+        取不到角色配置只说明「这次比平时宽松」，而固件区间仍然拦得住。
+
+        同时供 ``execution._run_play`` 下发前复核用 —— 入口校验与下发前复核是
+        **两道独立防线**：前者给用户可读的错误，后者保证「绕过入口直接下发」也拦得住。
+        """
+        try:
+            config = self.roles.get(int(role_id))
+        except Exception:  # noqa: BLE001 角色未注册/配置异常都不该阻断播放
+            return (FW_MIN_US, FW_MAX_US)
+        return (int(config.min_us), int(config.max_us))
+
     def validate_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        """按**该动作自称的 role_id** 取角色限幅校验（不是当前激活角色）。
+
+        为什么用动作自己的 ``role_id``：本方法服务于「编辑态校验」—— 用户在网页上
+        改完动作、还没保存播放，此时动作可能属于任意角色。按当前激活角色取限幅会
+        拿 role2 的限幅去判 role1 的动作，产生「明明合法却被拒」的假阳性。
+        动作里没有合法 ``role_id`` 时 ``validate`` 本身会先拒掉格式。
+        """
         from host.motion.validation import validate  # noqa: PLC0415  （延迟导入，避免循环）
 
+        role_id = action.get("role_id") if isinstance(action, dict) else None
+        min_us, max_us = self.role_limits(role_id)
         try:
-            validate(action)
+            validate(action, min_us=min_us, max_us=max_us)
         except (ValueError, TypeError) as exc:
             return {"valid": False, "errors": [{"path": "action", "message": str(exc)}]}
         return {"valid": True, "errors": []}

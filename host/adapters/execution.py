@@ -127,7 +127,19 @@ class ExecutionMixin:
         try:
             if self.motion is None:
                 raise ConflictError("未配置运动链路")
-            result = self.motion.play(action, role_id=int(payload["role_id"]))
+            role_id = int(payload["role_id"])
+            # 第二道防线：入口（ports.play_action / resolve_greet_action）已按角色限幅
+            # 校验过，这里在**真正下发前**再查一次。理由：那两处都是「读文件 → 校验 →
+            # 入队」，而本函数消费的是队列里的载荷 —— 任何绕过入口直接塞进队列的路径
+            # （未来的新端点、注入面、测试夹具）都会跳过入口校验。限幅是机械安全边界，
+            # 必须在**紧贴硬件**的那一层再兜一次。
+            #
+            # 与入口的**失败语义刻意不同**：入口不合规走 409 / 静默降级（内容问题
+            # 不该让设备锁死）；这里不合规意味着「载荷绕过了入口」，属装配/调用面的
+            # 真实异常，交给既有 except 归成 SAFETY_TRIP + 故障锁定（需人工确认）。
+            min_us, max_us = self.role_limits(role_id)
+            result = self.motion.play(action, role_id=role_id,
+                                      min_us=min_us, max_us=max_us)
         except (HostError, ValueError, OSError) as exc:
             # OSError 覆盖 pyserial 的 SerialException（串口不存在/被占用/播放中被拔线），
             # 否则它会越过此处、打穿 worker 线程（P0-2）。

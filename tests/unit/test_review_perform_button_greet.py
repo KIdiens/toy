@@ -44,11 +44,17 @@ def _running(context, *, spy: list | None = None):
     if spy is not None:
         original = context.motion.play
 
-        def record(action, *, role_id=None):
+        def record(action, **kwargs):
+            # kwargs 通用转发而非写死签名：产品侧给 play() 加参数时，桩不会因为
+            # 签名对不上而抛 TypeError —— 那种失败会伪装成「被测行为坏了」，
+            # 实则是替身没跟上（本次就踩到过）。限幅一并记录，它同时是
+            # 「第二道防线的限幅真的传到了硬件层」的观测点。
+            role_id = kwargs.get("role_id")
             spy.append({"name": action.get("name"), "role_id": role_id,
                         "file_role_id": action.get("role_id"),
+                        "min_us": kwargs.get("min_us"), "max_us": kwargs.get("max_us"),
                         "end_ms": action["frames"][-1]["t_ms"]})
-            return original(action, role_id=role_id)
+            return original(action, **kwargs)
 
         context.motion.play = record
 
