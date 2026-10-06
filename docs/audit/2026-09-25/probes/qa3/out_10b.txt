@@ -1,0 +1,30 @@
+隔离区角色: ['1', '2', '3']
+
+=== A) 压缩炸弹（真 DEFLATE，3MB 全零）===
+结果: 已拒绝 -> 压缩比异常: bomb.bin (1026x)
+   role.json: size=307 comp=185 ratio=2
+   bomb.bin: size=3145728 comp=3065 ratio=1026
+
+=== B) 原子性：incoming.rename(target) 失败时旧版本是否保留 ===
+导入前: config_version= 1.0.0 actions= ['nod.json', 'wave.json']
+结果: 抛异常 -> OSError [probe] 模拟第二次改名失败
+导入后 target 仍存在? False
+  ❌ target 目录消失：旧版本丢失（违反 AC-25）
+  残留 .bak? True  .incoming? False
+
+=== C) crash 残留（1.bak 与 1 配置文件版本不同）→ load_all 是否 brick ===
+结果: load_all 抛异常 -> ConfigError 角色 2 版本冲突: 1.0.0 != 7.7.7
+
+=== D) 正向：合法包（config_version 升版）导入成功 ===
+导入 3 结果: ExtractReport(files=2, total_bytes=606, role_json='F:\\AI智能底座玩具\\_audit_qa3\\tmp\\iso_rolepack\\content\\roles\\3\\role.json')
+Traceback (most recent call last):
+  File "F:\AI智能底座玩具\_audit_qa3\probe_10b_rolepack_iso.py", line 130, in <module>
+    roles = reg2.load_all()
+  File "F:\AI智能底座玩具\toy\host\roles\registry.py", line 44, in load_all
+    self.register(RoleConfig.model_validate(data))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\AI智能底座玩具\toy\host\roles\registry.py", line 54, in register
+    raise ConfigError(
+    ...<2 lines>...
+    )
+host.core.errors.ConfigError: 角色 2 版本冲突: 1.0.0 != 7.7.7

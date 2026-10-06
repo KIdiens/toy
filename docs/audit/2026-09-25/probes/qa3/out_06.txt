@@ -1,0 +1,22 @@
+iter  0 port=4920 up=True exit=1 port_busy=False kids=[] -> OK
+iter  1 port=4937 up=True exit=1 port_busy=False kids=[] -> OK
+iter  2 port=4962 up=True exit=1 port_busy=False kids=[] -> OK
+iter  3 port=4987 up=True exit=1 port_busy=False kids=[] -> OK
+iter  4 port=7765 up=True exit=1 port_busy=False kids=[] -> OK
+iter  5 port=7785 up=True exit=1 port_busy=False kids=[] -> OK
+iter  6 port=7802 up=True exit=1 port_busy=False kids=[] -> OK
+iter  7 port=7818 up=True exit=1 port_busy=False kids=[] -> OK
+iter  8 port=8410 up=True exit=1 port_busy=False kids=[] -> OK
+iter  9 port=6686 up=True exit=1 port_busy=False kids=[] -> OK
+iter 10 port=6708 up=True exit=1 port_busy=False kids=[] -> OK
+iter 11 port=12102 up=True exit=1 port_busy=False kids=[] -> OK
+iter 12 port=8953 up=True exit=1 port_busy=False kids=[] -> OK
+iter 13 port=8967 up=True exit=1 port_busy=False kids=[] -> OK
+iter 14 port=14229 up=True exit=1 port_busy=False kids=[] -> OK
+iter 15 port=8487 up=True exit=1 port_busy=False kids=[] -> OK
+iter 16 port=12716 up=True exit=1 port_busy=False kids=[] -> OK
+iter 17 port=13732 up=True exit=1 port_busy=False kids=[] -> OK
+iter 18 port=7517 up=True exit=1 port_busy=False kids=[] -> OK
+iter 19 port=4122 up=True exit=1 port_busy=False kids=[] -> OK
+
+summary: ALL OK

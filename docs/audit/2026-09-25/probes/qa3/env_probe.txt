@@ -1,0 +1,13 @@
+PY 3.13.14
+fastapi: YES
+uvicorn: YES
+pydantic: YES
+psutil: YES
+serial: YES
+sounddevice: NO
+soundfile: NO
+httpx: YES
+starlette: YES
+cwd F:\AI智能底座玩具\_audit_qa3
+port 8765 FREE
+port 8010 FREE

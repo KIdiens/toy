@@ -1,0 +1,48 @@
+== 提醒创建：due_at_utc 各类畸形 ==
+POST /reminders [not-a-date]                         -> status=500 envelope=False msg=Internal Server Error
+POST /reminders [empty due]                          -> status=422 envelope=True msg=请求参数校验失败：due_at_utc: String should have at least 1 character
+POST /reminders [number due]                         -> status=422 envelope=True msg=请求参数校验失败：due_at_utc: Input should be a valid string
+POST /reminders [null due]                           -> status=422 envelope=True msg=请求参数校验失败：due_at_utc: Input should be a valid string
+POST /reminders [array due]                          -> status=422 envelope=True msg=请求参数校验失败：due_at_utc: Input should be a valid string
+POST /reminders [huge year]                          -> status=500 envelope=False msg=Internal Server Error
+POST /reminders [unicode due]                        -> status=500 envelope=False msg=Internal Server Error
+POST /reminders [text 1M chars]                      -> status=422 envelope=True msg=请求参数校验失败：text: String should have at most 200 characters
+POST /reminders [text U+202E]                        -> status=201 envelope=True msg=
+POST /reminders [text int]                           -> status=422 envelope=True msg=请求参数校验失败：text: Input should be a valid string
+POST /reminders [idem 100 chars]                     -> status=422 envelope=True msg=请求参数校验失败：idempotency_key: String should have at most 64 characters
+
+== 动作播放：role_id / action_id 边界 ==
+POST /actions/play [role 2**64]                      -> status=422 envelope=True msg=请求参数校验失败：role_id: Input should be less than or equal to 3
+POST /actions/play [role -1]                         -> status=422 envelope=True msg=请求参数校验失败：role_id: Input should be greater than or equal to 1
+POST /actions/play [role 0]                          -> status=422 envelope=True msg=请求参数校验失败：role_id: Input should be greater than or equal to 1
+POST /actions/play [role NaN]                        -> status=422 envelope=True msg=请求参数校验失败：role_id: Input should be a finite number
+POST /actions/play [role Infinity]                   -> status=422 envelope=True msg=请求参数校验失败：role_id: Input should be a finite number
+POST /actions/play [role string]                     -> status=200 envelope=True msg=
+POST /actions/play [action_id 1M]                    -> status=422 envelope=True msg=请求参数校验失败：action_id: String should have at most 60 characters
+POST /actions/play [action_id empty]                 -> status=422 envelope=True msg=请求参数校验失败：action_id: String should have at least 1 character
+POST /actions/play [request_id null]                 -> status=422 envelope=True msg=请求参数校验失败：request_id: Input should be a valid string
+
+== 原始非法 JSON（NaN/Infinity 字面量）==
+reminders body=NaN                                   -> status=422 envelope=True msg=请求参数校验失败：请求: Input should be a valid dictionary or object to extract fields from
+reminders body=Infinity                              -> status=422 envelope=True msg=请求参数校验失败：请求: Input should be a valid dictionary or object to extract fields from
+reminders body={}                                    -> status=422 envelope=True msg=请求参数校验失败：request_id: Field required；profile_id: Field required；text: Field required；due_at
+reminders body=[]                                    -> status=422 envelope=True msg=请求参数校验失败：请求: Input should be a valid dictionary or object to extract fields from
+reminders body=null                                  -> status=422 envelope=True msg=请求参数校验失败：请求: Field required
+
+== 深嵌套 JSON（/actions/validate）==
+validate depth=5000                                  -> status=400 envelope=True msg=There was an error parsing the body
+
+== GET 查询串边界（阈值探测，按序不崩）==
+GET /memories?profile_id=<1000 个 9>                  -> status=500 envelope=False msg=Internal Server Error
+GET /memories?profile_id=<8000 个 9>                  -> status=422 envelope=True msg=非法档案编号: 9999999999999999999999999999999999999999999999999999999999999999999999999999999999
+GET /memories?profile_id=<100000 个 9>                -> status=400 envelope=False msg=Invalid HTTP request received.
+GET /memories?profile_id=<1000000 个 9>               -> status=EXC envelope=False msg=ConnectionResetError: [WinError 10054] 远程主机强迫关闭了一个现有的连接。
+GET /memories?profile_id=-1                          -> status=200 envelope=True msg=
+GET /memories?profile_id=NaN                         -> status=422 envelope=True msg=非法档案编号: NaN
+DELETE /reminders/abc                                -> status=422 envelope=True msg=非法提醒编号: abc
+DELETE /reminders/999999999999999999999999           -> status=500 envelope=False msg=Internal Server Error
+GET /status 复检                                       -> status=200 envelope=True msg=
+
+== 服务是否仍存活 ==
+status: 200 PERFORMING alive: True faults: 0
+SERVER_EXIT done

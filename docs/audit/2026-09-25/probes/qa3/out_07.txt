@@ -1,0 +1,64 @@
+========== 1) DB_PATH 指向目录 ==========
+rc: 1 stayed_alive: False
+OUTPUT: Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "F:\AI智能底座玩具\toy\host\main.py", line 83, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "F:\AI智能底座玩具\toy\host\main.py", line 60, in main
+    context = build_context(settings, simulate=args.simulate)
+  File "F:\AI智能底座玩具\toy\host\adapters\runtime.py", line 107, in build_context
+    database.initialize()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "F:\AI智能底座玩具\toy\host\storage\database.py", line 102, in initialize
+    con = self.connect()
+  File "F:\AI智能底座玩具\toy\host\storage\database.py", line 64, in connect
+    con = sqlite3.connect(self._path, isolation_level=None)
+sqlite3.OperationalError: unable to open database file
+
+========== 2) DB_PATH 超长路径(>300) ==========
+rc: 1 stayed_alive: False
+OUTPUT: uild_context
+    database = db if db is not None else Database(settings.storage.path)
+                                         ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\AI智能底座玩具\toy\host\storage\database.py", line 57, in __init__
+    Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\pathlib\_local.py", line 722, in mkdir
+    os.mkdir(self, mode)
+    ~~~~~~~~^^^^^^^^^^^^
+OSError: [WinError 123] 文件名、目录名或卷标语法不正确。: 'F:\\AI智能底座玩具\\_audit_qa3\\tmp\\xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+
+========== 3) MOTION_PORT 非法值 + simulate（应被忽略仍能起） ==========
+rc: 1 stayed_alive: True
+OUTPUT: 2026-09-25 00:22:44,126 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:22:44,134 INFO host.main: 主机服务就绪：http://127.0.0.1:14085（simulate=True，AI=stub）
+INFO:     Started server process [30152]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:14085 (Press CTRL+C to quit)
+
+========== 4) HOST_PORT 被占用 ==========
+occupied port: 3755 rc: 3 stayed_alive: False
+OUTPUT: 2026-09-25 00:22:52,189 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:22:52,196 INFO host.main: 主机服务就绪：http://127.0.0.1:3755（simulate=True，AI=stub）
+INFO:     Started server process [31240]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 3755): [winerror 10048] 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+2026-09-25 00:22:52,244 INFO host.main: 主机服务停止，开始收尾
+
+========== 5) 非 simulate + 非法 MOTION_PORT（启动应成功，播放时降级为故障） ==========
+rc: 1 stayed_alive: True
+OUTPUT: 2026-09-25 00:22:53,377 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:22:53,378 INFO host.main: 主机服务就绪：http://127.0.0.1:3604（simulate=False，AI=stub）
+INFO:     Started server process [31752]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:3604 (Press CTRL+C to quit)
+status: 200
+play: 200 b'{"code":0,"data":{"scheduled":true,"action_id":"nod","seq":0},"message":""}'
+after play: FAULT_LOCKED fault: {'code': 'SAFETY_TRIP', 'detail': "could not open port 'COM_NOT_EXIST_999': FileNotFoundError(2, '系统找不到指定的文件。', None, 2)"} alive: True faults: 0

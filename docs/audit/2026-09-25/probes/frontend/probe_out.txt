@@ -1,0 +1,23 @@
+Chrome: C:/Program Files/Google/Chrome/Application/chrome.exe
+
+=== /memories ===
+  请求过的 API: ['/api/v1/memories', '/api/v1/settings']
+  DOM 含记忆正文 '我喜欢恐龙': False
+  DOM 含 '共 1 条记忆': True
+  DOM 含 <memory-row>: True
+
+=== /reminders ===
+  请求过的 API: ['/api/v1/reminders', '/api/v1/roles', '/api/v1/status']
+  DOM 含提醒正文 '该刷牙啦': True
+  DOM 含 '共 1 条提醒': True
+  DOM 含 <reminder-row>: False
+
+=== /editor ===
+  请求过的 API: ['/api/v1/events', '/api/v1/roles', '/api/v1/status']
+  是否请求 /api/v1/actions/files: False
+  DOM 含 'wave.json': False
+  文件列表空态可见: True
+
+=== /settings（对照）===
+  请求过的 API: ['/api/v1/features', '/api/v1/settings', '/api/v1/status']
+  DOM 含 SSID 值 home-2.4g: True

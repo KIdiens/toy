@@ -1,0 +1,41 @@
+========== 单次表演键 (n=2) ==========
+start: IDLE
+press2 -> 200 {'code': 0, 'data': {'state': 'PERFORMING'}, 'message': ''}
+  +0.3s ('PERFORMING', 1, True, 0)
+  +0.6s ('PERFORMING', 1, True, 0)
+  +0.9s ('PERFORMING', 1, True, 0)
+  +1.2s ('PERFORMING', 1, True, 0)
+  +1.5s ('PERFORMING', 1, True, 0)
+  +1.8s ('PERFORMING', 1, True, 0)
+  +2.1s ('PERFORMING', 1, True, 0)
+  +2.4s ('PERFORMING', 1, True, 0)
+  +2.7s ('PERFORMING', 1, True, 0)
+  +3.0s ('PERFORMING', 1, True, 0)
+FINAL: PERFORMING <-- 若长期停在 PERFORMING 即为卡死
+
+========== 单次音量键 (n=3) ==========
+press3 -> 200 {'code': 0, 'data': {'state': 'IDLE'}, 'message': ''}
+  +0.3s ('IDLE', 1, True, 0)
+  +0.6s ('IDLE', 1, True, 0)
+  +0.9s ('IDLE', 1, True, 0)
+  +1.2s ('IDLE', 1, True, 0)
+  +1.5s ('IDLE', 1, True, 0)
+FINAL: IDLE
+
+========== 表演键(2) → 再按一次(2) ==========
+after 1st press2: PERFORMING
+after 2nd press2: IDLE
+worker_faults: 0
+--- log tail ---
+2026-09-25 00:19:55,617 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:19:55,624 INFO host.main: 主机服务就绪：http://127.0.0.1:1318（simulate=True，AI=stub）
+INFO:     Started server process [2908]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:1318 (Press CTRL+C to quit)
+INFO:     127.0.0.1:1319 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1334 - "POST /api/v1/dev/button HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1427 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1428 - "POST /api/v1/dev/button HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1429 - "GET /api/v1/status HTTP/1.1" 200 OK
+

@@ -1,0 +1,27 @@
+Exception in thread host-net:
+Traceback (most recent call last):
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 1044, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\threading.py", line 995, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "F:\AI智能底座玩具\toy\host\adapters\workers.py", line 71, in _net_loop
+    self._handle_net_request(command)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "F:\AI智能底座玩具\_audit_qa3\probe_14_domain_liveness.py", line 34, in raising_handle
+    raise RuntimeError("[probe] 模拟 net 领域处理器崩溃")
+RuntimeError: [probe] 模拟 net 领域处理器崩溃
+启动后线程: ['MainThread', 'Thread-1 (run_forever)', 'host-audio', 'host-net', 'host-tick']
+worker_alive: True worker_faults: 0
+
+触发 NET_REQUEST 后：
+  net 处理器被调用次数: 1
+  仍在运行的 host-* 线程: ['host-audio', 'host-tick']
+  worker_alive: True  (net 线程已死，但心跳是 motion worker 的)
+  worker_faults: 0  (未因 net 线程死亡而增加)
+  status.state: THINKING
+
+再次对话后 state: THINKING net 处理器调用次数仍为: 1
+→ 结论：domain 线程（net）静默死亡后，worker_alive 仍为 True、 worker_faults 不变、state 卡 THINKING（仅靠 60s tick 兜底）。
+close 后线程: ['MainThread']

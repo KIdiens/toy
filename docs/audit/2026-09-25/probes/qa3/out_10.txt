@@ -1,0 +1,19 @@
+repo role.json hashes BEFORE: {'F:\\AI智能底座玩具\\toy\\content\\roles\\1\\role.json': '5276e9771a807203', 'F:\\AI智能底座玩具\\toy\\content\\roles\\2\\role.json': '22e4dc6757b7b2ee', 'F:\\AI智能底座玩具\\toy\\content\\roles\\3\\role.json': '61baeb2e349d0529'}
+非zip内容                 -> status=400 envelope=True msg=损坏的 zip: File is not a zip file
+空文件                    -> status=400 envelope=True msg=上传内容为空
+缺role.json             -> status=400 envelope=True msg=角色包缺少 role.json
+role.json非法JSON        -> status=400 envelope=True msg=role.json 不是合法 JSON: Expecting property name enclosed in double quotes: line 1 c
+role.json schema非法     -> status=400 envelope=True msg=角色配置非法: 6 validation errors for RoleConfig
+name
+  Field required [type=missing, 
+路径穿越 ../               -> status=400 envelope=True msg=拒绝路径穿越: ../evil.txt
+绝对路径 /etc              -> status=400 envelope=True msg=拒绝绝对路径: /etc/passwd
+符号链接                   -> status=400 envelope=True msg=拒绝符号链接: role.json
+可执行后缀 .py              -> status=400 envelope=True msg=拒绝可执行脚本: run.py
+压缩炸弹(高压缩比)             -> status=201 envelope=True msg=
+超大上传(>20MB)            -> status=400 envelope=True msg=上传体积超上限 20971520 字节
+roles after: 200 [(1, '1.0.0'), (2, '1.0.0'), (3, '1.0.0')]
+state: IDLE alive: True faults: 0
+repo role.json hashes AFTER : {'F:\\AI智能底座玩具\\toy\\content\\roles\\1\\role.json': '25179a5263cc9c3a', 'F:\\AI智能底座玩具\\toy\\content\\roles\\2\\role.json': '22e4dc6757b7b2ee', 'F:\\AI智能底座玩具\\toy\\content\\roles\\3\\role.json': '61baeb2e349d0529'}
+REPO 未变? False
+残留 .bak/.incoming: []

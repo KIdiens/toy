@@ -1,0 +1,11 @@
+========== A) 录音自动收尾（NullBackend）==========
+after press1: RECORDING
+  ❌ 24s 内一直停在 RECORDING（15s 自动收尾未触发）
+  最终: RECORDING  时长≈ 24.0 s
+
+========== B) THINKING 最坏驻留（进程内，实测真实 60s 常量）==========
+NET_THINKING_TIMEOUT_S = 60.0
+进入: THINKING gen= 1
+换角色后 gen= 2 state= THINKING
+THINKING 驻留实测: 60.5s -> 终态 IDLE
+（预期 ≈ NET_THINKING_TIMEOUT_S=60s + tick 采样粒度）

@@ -1,0 +1,26 @@
+
+==============================================================================
+A. transaction(): BEGIN IMMEDIATE 锁超时 → 裸 sqlite3.Error 逃逸？
+==============================================================================
+    第二个连接进入 transaction() 结果：raw sqlite3.Error
+    详情：sqlite3.OperationalError: database is locked
+    耗时 5.5s（应≈ busy_timeout=5s）
+    >>> 裸异常逃逸：违反 database.transaction docstring「统一转成 StorageError」
+
+==============================================================================
+C. 幂等键重复 → 调用方返回的记录是否正确
+==============================================================================
+    已建：A(id=1, KEY-A)、B(id=2, KEY-B)
+    重放 KEY-A → UniqueViolation（符合预期）
+    调用方 API list_by_profile(pid)[-1] 取回 = id=2 text='B-睡觉' key='KEY-B'
+    期望取回                              = id=1 text='A-喝水' key='KEY-A'
+    >>> 返回记录错误 → 数据完整性缺陷
+
+==============================================================================
+D. 角色包成员名：反斜杠 / 冒号 / 大写
+==============================================================================
+    成员名 'actions\\wave.json': validate_zip 放行；落盘 = ['actions\\wave.json', 'role.json']
+    成员名 'actions:evil.json': validate_zip 放行；落盘 = ['actions', 'role.json']
+    成员名 'ROLE.JSON': validate_zip 放行；落盘 = ['role.json']
+
+完成。

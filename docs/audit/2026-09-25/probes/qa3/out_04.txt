@@ -1,0 +1,9 @@
+boot state: IDLE worker_alive: True
+after 2 presses, state: THINKING (net worker 应正在慢响应)
+status_snapshot 延迟 ms: max=0.03 avg=0.02
+press_button(3) 延迟 ms: max=0.08 avg=0.05
+state during load: THINKING
+cancel press(1) 耗时 0.06ms, state now: IDLE
+    [slow net] respond_audio 完成，耗时 8.0s
+final state: IDLE worker_faults: 0 alive: True
+threads after close: 1 ['MainThread']

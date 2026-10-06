@@ -1,0 +1,54 @@
+=== 长跑结束 ===
+duration_s: 630.2
+samples: 42
+requests: {'status': 2464, 'play': 124, 'stop': 124, 'role': 52, 'button': 0}
+http_5xx: 0
+RSS  first/max/last: 75.35 76.59 69.53 MB
+HANDLE first/max/last: 373 373 299
+THREAD first/max/last: 15 15 8
+--- samples ---
+   {'rss_mb': 75.35, 'handles': 373, 'threads': 15, 't': 0.0}
+   {'rss_mb': 76.59, 'handles': 373, 'threads': 15, 't': 15.1}
+   {'rss_mb': 70.49, 'handles': 314, 'threads': 14, 't': 30.2}
+   {'rss_mb': 71.17, 'handles': 315, 'threads': 14, 't': 45.4}
+   {'rss_mb': 71.76, 'handles': 313, 'threads': 11, 't': 60.5}
+   {'rss_mb': 69.05, 'handles': 313, 'threads': 11, 't': 75.6}
+   {'rss_mb': 69.32, 'handles': 311, 'threads': 11, 't': 90.7}
+   {'rss_mb': 69.46, 'handles': 311, 'threads': 11, 't': 105.9}
+   {'rss_mb': 70.22, 'handles': 311, 'threads': 11, 't': 121.0}
+   {'rss_mb': 70.67, 'handles': 306, 'threads': 8, 't': 136.1}
+   {'rss_mb': 71.3, 'handles': 305, 'threads': 8, 't': 151.3}
+   {'rss_mb': 71.86, 'handles': 305, 'threads': 8, 't': 166.3}
+   {'rss_mb': 69.94, 'handles': 305, 'threads': 8, 't': 181.3}
+   {'rss_mb': 69.64, 'handles': 306, 'threads': 8, 't': 196.4}
+   {'rss_mb': 70.06, 'handles': 299, 'threads': 7, 't': 211.6}
+   {'rss_mb': 71.62, 'handles': 299, 'threads': 7, 't': 226.6}
+   {'rss_mb': 70.93, 'handles': 299, 'threads': 7, 't': 241.6}
+   {'rss_mb': 71.24, 'handles': 299, 'threads': 7, 't': 256.6}
+   {'rss_mb': 71.62, 'handles': 299, 'threads': 7, 't': 271.7}
+   {'rss_mb': 69.7, 'handles': 299, 'threads': 7, 't': 287.0}
+   {'rss_mb': 70.47, 'handles': 298, 'threads': 8, 't': 302.0}
+   {'rss_mb': 69.79, 'handles': 298, 'threads': 8, 't': 317.1}
+   {'rss_mb': 71.35, 'handles': 298, 'threads': 8, 't': 332.3}
+   {'rss_mb': 70.92, 'handles': 298, 'threads': 8, 't': 347.5}
+   {'rss_mb': 72.05, 'handles': 298, 'threads': 8, 't': 362.6}
+   {'rss_mb': 72.72, 'handles': 298, 'threads': 8, 't': 377.7}
+   {'rss_mb': 72.73, 'handles': 298, 'threads': 8, 't': 392.9}
+   {'rss_mb': 69.64, 'handles': 298, 'threads': 6, 't': 407.9}
+   {'rss_mb': 69.4, 'handles': 299, 'threads': 6, 't': 423.0}
+   {'rss_mb': 70.09, 'handles': 298, 'threads': 6, 't': 438.0}
+   {'rss_mb': 70.58, 'handles': 298, 'threads': 6, 't': 453.1}
+   {'rss_mb': 71.21, 'handles': 298, 'threads': 6, 't': 468.2}
+   {'rss_mb': 72.45, 'handles': 298, 'threads': 6, 't': 483.5}
+   {'rss_mb': 70.06, 'handles': 298, 'threads': 6, 't': 498.6}
+   {'rss_mb': 69.74, 'handles': 298, 'threads': 6, 't': 513.7}
+   {'rss_mb': 70.11, 'handles': 299, 'threads': 6, 't': 528.9}
+   {'rss_mb': 71.78, 'handles': 298, 'threads': 6, 't': 544.0}
+   {'rss_mb': 71.41, 'handles': 298, 'threads': 6, 't': 559.0}
+   {'rss_mb': 71.27, 'handles': 298, 'threads': 6, 't': 574.0}
+   {'rss_mb': 71.89, 'handles': 298, 'threads': 6, 't': 589.0}
+   {'rss_mb': 72.38, 'handles': 299, 'threads': 8, 't': 604.2}
+   {'rss_mb': 69.53, 'handles': 299, 'threads': 8, 't': 619.5}
+THREAD tail min/max: 6 8
+SERVER_EXIT 1
+child_pids after stop: []

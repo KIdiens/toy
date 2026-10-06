@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark"><head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>动作编排器 · 玩具主机</title>
+  <meta name="description" content="四轴关键帧编排工作台：时间轴、菱形关键帧、音频波形轨、限位校验与离线本地预演。">
+  <meta name="color-scheme" content="dark light">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles-editor.css">
+</head>
+<body>
+  <a class="skip-link" href="#tl-inner">跳到时间轴</a>
+
+  <app-topbar active="editor"><a class="topbar__brand" href="/"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 14 4-4"></path> <path d="M3.34 19a10 10 0 1 1 17.32 0"></path></svg><span>玩具主机</span></a>
+      <nav class="nav" aria-label="主导航"><a class="nav__link" href="/"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 14 4-4"></path> <path d="M3.34 19a10 10 0 1 1 17.32 0"></path></svg><span>设备状态</span></a><a class="nav__link" href="/editor" aria-current="page"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18 8 4 4-4 4"></path> <path d="M2 12h20"></path> <path d="m6 8-4 4 4 4"></path></svg><span>动作编排</span></a><a class="nav__link" href="/memories"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 18V5"></path> <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"></path> <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path> <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"></path> <path d="M18 18a4 4 0 0 0 2-7.464"></path> <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"></path> <path d="M6 18a4 4 0 0 1-2-7.464"></path> <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"></path></svg><span>记忆</span></a><a class="nav__link" href="/reminders"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path> <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg><span>提醒</span></a><a class="nav__link" href="/settings"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path> <circle cx="12" cy="12" r="3"></circle></svg><span>设置</span></a></nav>
+      <span class="topbar__spacer"></span>
+      <div class="topbar__group"><span data-slot="">
+    <conn-state-chip id="conn" state="online"><span class="conn conn--online" role="status" aria-live="polite">
+      <span class="conn__dot" aria-hidden="true"></span><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path> <path d="m2 22 3-3"></path> <path d="M7.5 13.5 10 11"></path> <path d="M10.5 16.5 13 14"></path> <path d="m18 3-4 4h6l-4 4"></path></svg>
+      <span>已连接设备</span></span></conn-state-chip>
+  </span><theme-toggle><button class="btn btn--ghost" type="button" data-act="toggle" aria-pressed="false" title="切换到深色">
+      <svg class="ic" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"></path></svg><span class="small">深色</span></button></theme-toggle></div></app-topbar>
+
+  <editor-shell><div class="editor">
+      <aside class="editor__rail editor__rail--left" data-left=""><span data-slot="left"><div slot="left" class="stack">
+      <role-select id="role" role-id="1" config-version="1.0.0"><label class="rowflex small"><span class="muted">角色</span>
+      <span class="ic-btn"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="5"></circle> <path d="M20 21a8 8 0 0 0-16 0"></path></svg></span>
+      <select class="select" data-sel="" aria-label="选择角色" style="min-height:36px;width:auto"><option value="1" data-ver="1.0.0" selected="">1.0.0</option></select>
+      <span class="chip chip--mono" data-ver=""></span></label></role-select>
+      <hr class="hr">
+      <track-list id="tracks"><div class="stack"><span class="rail-title">四轴轨道</span>
+      <div role="listbox" aria-label="四轴轨道列表"><div class="track-item" data-axis="1" role="option" aria-selected="false">
+        <span class="track-item__dot" style="background: var(--track-1)"></span>
+        <span data-axis-name="1"><span class="track-item__name">轴1 左臂</span>
+          <br><span class="track-item__sub">采样 1500µs</span></span>
+        <button class="btn btn--ghost" type="button" data-mute="1" aria-pressed="false" title="静音该轴"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"></path> <path d="m16.5 14.5 5-5"></path> <path d="m16.5 9.5 5 5"></path></svg></button></div><div class="track-item" data-axis="2" role="option" aria-selected="true">
+        <span class="track-item__dot" style="background: var(--track-2)"></span>
+        <span data-axis-name="2"><span class="track-item__name">轴2 右臂</span>
+          <br><span class="track-item__sub">采样 1500µs</span></span>
+        <button class="btn btn--ghost" type="button" data-mute="2" aria-pressed="false" title="静音该轴"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"></path> <path d="m16.5 14.5 5-5"></path> <path d="m16.5 9.5 5 5"></path></svg></button></div><div class="track-item" data-axis="3" role="option" aria-selected="false">
+        <span class="track-item__dot" style="background: var(--track-3)"></span>
+        <span data-axis-name="3"><span class="track-item__name">轴3 头部左右</span>
+          <br><span class="track-item__sub">采样 1500µs</span></span>
+        <button class="btn btn--ghost" type="button" data-mute="3" aria-pressed="false" title="静音该轴"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"></path> <path d="m16.5 14.5 5-5"></path> <path d="m16.5 9.5 5 5"></path></svg></button></div><div class="track-item" data-axis="4" role="option" aria-selected="false">
+        <span class="track-item__dot" style="background: var(--track-4)"></span>
+        <span data-axis-name="4"><span class="track-item__name">轴4 腰部左右</span>
+          <br><span class="track-item__sub">采样 1500µs</span></span>
+        <button class="btn btn--ghost" type="button" data-mute="4" aria-pressed="false" title="静音该轴"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"></path> <path d="m16.5 14.5 5-5"></path> <path d="m16.5 9.5 5 5"></path></svg></button></div></div></div></track-list>
+      <hr class="hr">
+      <action-file-list id="files" empty-hint="本机服务动作文件列表接口尚未提供；可用下方「新建」「导入」在本地编辑。"><div class="stack">
+      <div class="rowflex"><span class="rail-title grow" style="margin:0">动作文件</span>
+        <button class="btn btn--ghost" type="button" data-act="new" title="新建空白动作"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14"></path> <path d="M12 5v14"></path></svg></button>
+        <button class="btn btn--ghost" type="button" data-act="import" title="导入角色包"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v12"></path> <path d="m17 8-5-5-5 5"></path> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg></button>
+      </div>
+      <div style="margin: 0 calc(var(--space-2) * -1)"><p class="xs meta">本机服务动作文件列表接口尚未提供；可用下方「新建」「导入」在本地编辑。</p></div></div></action-file-list>
+    </div></span></aside>
+      <section class="editor__center"><span data-slot="center"><div slot="center">
+      <div class="editor__toolbar">
+        <timecode-display id="tc" ms="0" total-ms="2400"><span class="ic-btn"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="10" x2="14" y1="2" y2="2"></line> <line x1="12" x2="15" y1="14" y2="11"></line> <circle cx="12" cy="14" r="8"></circle></svg>
+      <span class="timecode">00:00.000 <span class="meta">/ 00:02.400</span></span></span></timecode-display>
+        <span class="grow"></span>
+        <span class="chip">离线预演 · 本地插值 s(u)=3u²−2u³</span>
+        <button class="btn btn--ghost" type="button" id="import-btn">导入角色包</button>
+        <button class="btn btn--ghost" type="button" id="export-btn">导出动作</button>
+      </div>
+
+      <device-banner id="offline-banner" mode="offline" class="hidden"><div class="banner banner--offline" role="status">
+      <span class="banner__ic"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 20h.01"></path> <path d="M8.5 16.429a5 5 0 0 1 7 0"></path> <path d="M5 12.859a10 10 0 0 1 5.17-2.69"></path> <path d="M19 12.859a10 10 0 0 0-2.007-1.523"></path> <path d="M2 8.82a15 15 0 0 1 4.177-2.643"></path> <path d="M22 8.82a15 15 0 0 0-11.288-3.764"></path> <path d="m2 2 20 20"></path></svg></span>
+      <span class="banner__text">未检测到设备。界面可离线查看与编辑，动作只会预演、不会发送。</span>
+      <span class="banner__actions" data-slot=""></span>
+      <span class="banner__actions">
+        <button class="btn btn--secondary" type="button" data-act="retry"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path> <path d="M21 3v5h-5"></path> <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path> <path d="M8 16H3v5"></path></svg>重试检测</button>
+        <button class="btn btn--ghost" type="button" data-act="guide"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v16"></path> <path d="M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z"></path></svg>连接指引</button>
+      </span></div></device-banner>
+
+      <div class="tl">
+        <div class="tl__scroll">
+          <div class="tl__inner" id="tl-inner">
+            <timeline-ruler id="ruler" duration-ms="2400" playhead-ms="0"><div class="ruler" role="slider" tabindex="0" aria-label="时间刻度，方向键移动播放指针" aria-valuemin="0" aria-valuemax="2400" aria-valuenow="0" aria-valuetext="00:00.000" data-ruler=""><span class="ruler__tick" style="left: 0%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(0% + 3px)">0s</span><span class="ruler__tick" style="left: 10.416666666666668%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(10.416666666666668% + 3px)">250ms</span><span class="ruler__tick" style="left: 20.833333333333336%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(20.833333333333336% + 3px)">500ms</span><span class="ruler__tick" style="left: 31.25%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(31.25% + 3px)">750ms</span><span class="ruler__tick" style="left: 41.66666666666667%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(41.66666666666667% + 3px)">1s</span><span class="ruler__tick" style="left: 52.083333333333336%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(52.083333333333336% + 3px)">1250ms</span><span class="ruler__tick" style="left: 62.5%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(62.5% + 3px)">1500ms</span><span class="ruler__tick" style="left: 72.91666666666666%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(72.91666666666666% + 3px)">1750ms</span><span class="ruler__tick" style="left: 83.33333333333334%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(83.33333333333334% + 3px)">2s</span><span class="ruler__tick" style="left: 93.75%" aria-hidden="true"></span>
+        <span class="ruler__label" style="left: calc(93.75% + 3px)">2250ms</span></div></timeline-ruler>
+            <track-lane id="lane-0" axis="0" min-us="1400" max-us="1600" muted="false"><div class="lane" data-lane="" data-muted="false" aria-label="轴1 轨道">
+      <div class="lane__band" style="position:absolute;left:0;right:0;top:4px;bottom:4px;border-radius:var(--radius-sm);
+      background:linear-gradient(180deg,var(--limit-near) 0,var(--limit-normal) 10%,var(--limit-normal) 90%,var(--limit-near) 100%)" aria-hidden="true"></div><button class="kf" type="button" data-kf="0" data-out="false" aria-selected="false" style="left: 0%; top: 50%" aria-label="关键帧 1：0 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="1" data-out="false" aria-selected="true" style="left: 50%; top: 20%" aria-label="关键帧 2：1200 毫秒，目标 1560 微秒" data-us="1560"></button><button class="kf" type="button" data-kf="2" data-out="false" aria-selected="false" style="left: 100%; top: 50%" aria-label="关键帧 3：2400 毫秒，目标 1500 微秒" data-us="1500"></button></div></track-lane>
+            <track-lane id="lane-1" axis="1" min-us="1400" max-us="1600" muted="false"><div class="lane" data-lane="" data-muted="false" aria-label="轴2 轨道">
+      <div class="lane__band" style="position:absolute;left:0;right:0;top:4px;bottom:4px;border-radius:var(--radius-sm);
+      background:linear-gradient(180deg,var(--limit-near) 0,var(--limit-normal) 10%,var(--limit-normal) 90%,var(--limit-near) 100%)" aria-hidden="true"></div><button class="kf" type="button" data-kf="0" data-out="false" aria-selected="false" style="left: 0%; top: 50%" aria-label="关键帧 1：0 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="1" data-out="false" aria-selected="true" style="left: 50%; top: 80%" aria-label="关键帧 2：1200 毫秒，目标 1440 微秒" data-us="1440"></button><button class="kf" type="button" data-kf="2" data-out="false" aria-selected="false" style="left: 100%; top: 50%" aria-label="关键帧 3：2400 毫秒，目标 1500 微秒" data-us="1500"></button></div></track-lane>
+            <track-lane id="lane-2" axis="2" min-us="1400" max-us="1600" muted="false"><div class="lane" data-lane="" data-muted="false" aria-label="轴3 轨道">
+      <div class="lane__band" style="position:absolute;left:0;right:0;top:4px;bottom:4px;border-radius:var(--radius-sm);
+      background:linear-gradient(180deg,var(--limit-near) 0,var(--limit-normal) 10%,var(--limit-normal) 90%,var(--limit-near) 100%)" aria-hidden="true"></div><button class="kf" type="button" data-kf="0" data-out="false" aria-selected="false" style="left: 0%; top: 50%" aria-label="关键帧 1：0 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="1" data-out="false" aria-selected="true" style="left: 50%; top: 50%" aria-label="关键帧 2：1200 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="2" data-out="false" aria-selected="false" style="left: 100%; top: 50%" aria-label="关键帧 3：2400 毫秒，目标 1500 微秒" data-us="1500"></button></div></track-lane>
+            <track-lane id="lane-3" axis="3" min-us="1400" max-us="1600" muted="false"><div class="lane" data-lane="" data-muted="false" aria-label="轴4 轨道">
+      <div class="lane__band" style="position:absolute;left:0;right:0;top:4px;bottom:4px;border-radius:var(--radius-sm);
+      background:linear-gradient(180deg,var(--limit-near) 0,var(--limit-normal) 10%,var(--limit-normal) 90%,var(--limit-near) 100%)" aria-hidden="true"></div><button class="kf" type="button" data-kf="0" data-out="false" aria-selected="false" style="left: 0%; top: 50%" aria-label="关键帧 1：0 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="1" data-out="false" aria-selected="true" style="left: 50%; top: 50%" aria-label="关键帧 2：1200 毫秒，目标 1500 微秒" data-us="1500"></button><button class="kf" type="button" data-kf="2" data-out="false" aria-selected="false" style="left: 100%; top: 50%" aria-label="关键帧 3：2400 毫秒，目标 1500 微秒" data-us="1500"></button></div></track-lane>
+            <audio-track-lane id="audio" duration-ms="2400" offset-ms="0" src=""><div class="audio-lane" aria-label="音频轨道，可拖动调整同步偏移">
+      <div class="wave" style="left: 0%; right: 0"><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 10px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 12px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 16px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 15px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 24px"></span><span class="wave__bar" style="height: 26px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 16px"></span><span class="wave__bar" style="height: 27px"></span><span class="wave__bar" style="height: 10px"></span><span class="wave__bar" style="height: 16px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 23px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 33px"></span><span class="wave__bar" style="height: 18px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 22px"></span><span class="wave__bar" style="height: 16px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 29px"></span><span class="wave__bar" style="height: 17px"></span><span class="wave__bar" style="height: 17px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 35px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 35px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 26px"></span><span class="wave__bar" style="height: 19px"></span><span class="wave__bar" style="height: 31px"></span><span class="wave__bar" style="height: 28px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 29px"></span><span class="wave__bar" style="height: 28px"></span><span class="wave__bar" style="height: 38px"></span><span class="wave__bar" style="height: 17px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 22px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 33px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 29px"></span><span class="wave__bar" style="height: 10px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 29px"></span><span class="wave__bar" style="height: 31px"></span><span class="wave__bar" style="height: 34px"></span><span class="wave__bar" style="height: 32px"></span><span class="wave__bar" style="height: 30px"></span><span class="wave__bar" style="height: 26px"></span><span class="wave__bar" style="height: 23px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 14px"></span><span class="wave__bar" style="height: 15px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 15px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 21px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 25px"></span><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 12px"></span><span class="wave__bar" style="height: 16px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 20px"></span><span class="wave__bar" style="height: 12px"></span><span class="wave__bar" style="height: 17px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 11px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 13px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 6px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 9px"></span><span class="wave__bar" style="height: 8px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 7px"></span><span class="wave__bar" style="height: 6px"></span></div>
+      <div style="position:absolute;left:var(--space-2);top:var(--space-1)">
+        <span class="chip chip--mono"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 10v3"></path> <path d="M6 6v11"></path> <path d="M10 3v18"></path> <path d="M14 8v7"></path> <path d="M18 5v13"></path> <path d="M22 10v3"></path></svg>
+          演示波形 · 偏移 <span data-num="">0ms</span></span></div></div></audio-track-lane>
+            <timeline-playhead id="ph" ms="0" duration-ms="2400"><div class="playhead" style="left: 0%" data-ph="">
+      <span class="playhead__grip" role="slider" tabindex="0" aria-label="播放指针" aria-valuemin="0" aria-valuemax="2400" aria-valuenow="0" aria-valuetext="00:00.000"></span></div></timeline-playhead>
+          </div>
+        </div>
+      </div>
+
+      <div class="editor__toolbar">
+        <button class="btn btn--secondary" type="button" id="kf-insert">在播放指针处插入关键帧</button>
+        <span class="grow"></span>
+        <span class="xs meta">键盘：左右方向键移播放指针，选中帧后左右键调时间、上下键调脉宽、Shift 加速、Delete 删除</span>
+      </div>
+
+      <transport-bar id="transport" playing="false" looping="false" preview-only="false" duration-ms="2400"><div class="seg">
+      <button class="btn btn--primary" type="button" data-act="play"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path></svg>
+        播放</button>
+      <button class="btn btn--ghost" type="button" data-act="stop"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg>STOP</button>
+      <button class="btn btn--ghost" type="button" data-act="loop" aria-pressed="false"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m17 2 4 4-4 4"></path> <path d="M3 11v-1a4 4 0 0 1 4-4h14"></path> <path d="m7 22-4-4 4-4"></path> <path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>循环</button>
+      <span class="grow"></span>
+      <span class="chip"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path> <path d="m2 22 3-3"></path> <path d="M7.5 13.5 10 11"></path> <path d="M10.5 16.5 13 14"></path> <path d="m18 3-4 4h6l-4 4"></path></svg>设备在线</span>
+      <span class="chip chip--mono" data-num="">2400ms</span></div></transport-bar>
+    </div></span></section>
+      <aside class="editor__rail editor__rail--right" data-right=""><span data-slot="right"><div slot="right" class="stack">
+      <keyframe-inspector id="inspector" max-speed="300"><div class="stack"><span class="rail-title">关键帧属性 · 第 2 帧</span>
+      <div class="field" style="margin-bottom:var(--space-2)">
+        <label class="field__label" for="kf-t">时间（ms）</label>
+        <input class="input input--num" id="kf-t" type="number" data-t="" value="1200" min="0" max="60000" step="1">
+        <span class="field__helper" data-num="">00:01.200</span></div>
+      <div class="field" style="margin-bottom:var(--space-2)">
+        <label class="field__label" for="us-0">轴1 左臂 目标（µs）</label>
+        <input class="input input--num" id="us-0" type="number" data-us="0" value="1560" min="1400" max="1600" step="1" aria-invalid="false">
+        </div><div class="field" style="margin-bottom:var(--space-2)">
+        <label class="field__label" for="us-1">轴2 右臂 目标（µs）</label>
+        <input class="input input--num" id="us-1" type="number" data-us="1" value="1440" min="1400" max="1600" step="1" aria-invalid="false">
+        </div><div class="field" style="margin-bottom:var(--space-2)">
+        <label class="field__label" for="us-2">轴3 头部左右 目标（µs）</label>
+        <input class="input input--num" id="us-2" type="number" data-us="2" value="1500" min="1400" max="1600" step="1" aria-invalid="false">
+        </div><div class="field" style="margin-bottom:var(--space-2)">
+        <label class="field__label" for="us-3">轴4 腰部左右 目标（µs）</label>
+        <input class="input input--num" id="us-3" type="number" data-us="3" value="1500" min="1400" max="1600" step="1" aria-invalid="false">
+        </div>
+      <interp-curve-preview highlight="1"><figure style="margin:0">
+      <svg viewBox="0 0 100 100" width="100%" height="72" role="img" aria-label="插值曲线缩略：三次平滑 s(u)=3u²−2u³，两端缓入缓出">
+        <polyline points="0.0,100.0 5.0,99.3 10.0,97.2 15.0,93.9 20.0,89.6 25.0,84.4 30.0,78.4 35.0,71.8 40.0,64.8 45.0,57.5 50.0,50.0 55.0,42.5 60.0,35.2 65.0,28.2 70.0,21.6 75.0,15.6 80.0,10.4 85.0,6.1 90.0,2.8 95.0,0.7 100.0,0.0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline>
+      </svg>
+      <figcaption class="xs meta" data-num="">s(u) = 3u² − 2u³ · 只读</figcaption></figure></interp-curve-preview>
+      <div class="stack"><div class="inspector__row"><span class="inspector__k">左臂 峰值速度</span>
+        <span class="inspector__v" style="color: inherit">
+          75.0 / 300 µs/s</span></div><div class="inspector__row"><span class="inspector__k">右臂 峰值速度</span>
+        <span class="inspector__v" style="color: inherit">
+          75.0 / 300 µs/s</span></div><div class="inspector__row"><span class="inspector__k">头部左右 峰值速度</span>
+        <span class="inspector__v" style="color: inherit">
+          0.0 / 300 µs/s</span></div><div class="inspector__row"><span class="inspector__k">腰部左右 峰值速度</span>
+        <span class="inspector__v" style="color: inherit">
+          0.0 / 300 µs/s</span></div></div>
+      <div class="rowflex">
+        <button class="btn btn--danger" type="button" data-act="del"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 11v6"></path> <path d="M14 11v6"></path> <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path> <path d="M3 6h18"></path> <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>删除该帧</button>
+        <button class="btn btn--ghost" type="button" data-act="focus"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"></path></svg>定位</button>
+      </div></div></keyframe-inspector>
+      <hr class="hr">
+      <axis-limit-panel id="limits"><div class="stack"><div class="stack"><div class="inspector__row">
+      <span class="inspector__k"><span class="axis-row__dot" style="display:inline-block;background: var(--track-1)"></span>
+        左臂</span>
+      <span class="inspector__v" data-num="">1400–1600µs · 中位 1500</span></div><div class="inspector__row">
+      <span class="inspector__k"><span class="axis-row__dot" style="display:inline-block;background: var(--track-2)"></span>
+        右臂</span>
+      <span class="inspector__v" data-num="">1400–1600µs · 中位 1500</span></div><div class="inspector__row">
+      <span class="inspector__k"><span class="axis-row__dot" style="display:inline-block;background: var(--track-3)"></span>
+        头部左右</span>
+      <span class="inspector__v" data-num="">1400–1600µs · 中位 1500</span></div><div class="inspector__row">
+      <span class="inspector__k"><span class="axis-row__dot" style="display:inline-block;background: var(--track-4)"></span>
+        腰部左右</span>
+      <span class="inspector__v" data-num="">1400–1600µs · 中位 1500</span></div></div>
+      <div class="inspector__row"><span class="inspector__k">峰值速度上限</span>
+      <span class="inspector__v" data-num="">300 µs/s</span></div></div></axis-limit-panel>
+      <p class="xs meta">限位真源为角色配置 <span class="num">min_us / max_us</span>；接口暂未暴露该字段，此处显示固件台架保守值 1400–1600µs。</p>
+      <hr class="hr">
+      <validate-result-list id="validate" busy="false"><div class="stack"><span class="rail-title">校验结果</span>
+      <span class="issue issue--ok"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"></circle> <path d="m16 9-5.5 5.5L8 12"></path></svg><span class="grow">校验通过：可安全下发或预演。</span></span>
+      <p class="xs meta">只校验、不移动硬件（POST /actions/validate）。</p></div></validate-result-list>
+      <hr class="hr">
+      <play-guard-button id="guard" disabled-reason=""><span class="seg">
+      <button class="btn btn--primary" type="button" data-act="preview"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path></svg>预演</button>
+      <button class="btn btn--secondary" type="button" data-act="send"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v12"></path> <path d="m17 8-5-5-5 5"></path> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path></svg>下发给设备</button>
+      
+    </span></play-guard-button>
+      <p class="xs meta">「下发给设备」需携带预期 role_id 与动作版本；第二个播放请求默认 409 拒绝，绝不静默叠加两条时间轴。</p>
+    </div></span></aside>
+    </div></editor-shell>
+
+  <input type="file" id="pack-file" accept=".zip,application/zip" hidden="">
+  <toast-stack><div class="toasts" aria-live="polite" aria-atomic="false"></div></toast-stack>
+  <import-rolepack-dialog id="impdialog"><dialog class="dlg" data-dlg="" aria-labelledby="imp-t">
+      <h2 class="dlg__title" id="imp-t"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"></path> <path d="M14 2v5a1 1 0 0 0 1 1h5"></path> <path d="M8 12v-1"></path> <path d="M8 18v-2"></path> <path d="M8 7V6"></path> <circle cx="8" cy="20" r="2"></circle></svg>导入角色包</h2>
+      <div class="dlg__body stack">
+        <div class="inspector__row"><span class="inspector__k">文件</span><span class="inspector__v">—</span></div>
+        <div class="inspector__row"><span class="inspector__k">将覆盖角色</span><span class="inspector__v">— · v—</span></div>
+        <div class="inspector__row"><span class="inspector__k">文件数</span><span class="inspector__v" data-num="">—</span></div>
+        <ul style="list-style:none;margin:0;padding:0"><li class="issue issue--ok"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path> <path d="m9 12 2 2 4-4"></path></svg><span class="grow">路径、符号链接、压缩比与签名校验均通过</span></li></ul>
+        <p class="xs" style="color:inherit">导入成功后将原子切换生效目录。</p>
+      </div>
+      <div class="dlg__actions">
+        <button class="btn btn--ghost" type="button" data-act="cancel">取消</button>
+        <button class="btn btn--primary" type="button" data-act="ok"><svg class="ic" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path> <path d="m9 12 2 2 4-4"></path></svg>确认导入</button>
+      </div></dialog></import-rolepack-dialog>
+
+  <dialog id="guide" class="dlg" aria-labelledby="guide-t">
+    <h2 class="dlg__title" id="guide-t">连接指引 · 为什么不能下发</h2>
+    <div class="dlg__body">
+      <p>当前未检测到设备，因此只能预演（时间轴、波形、曲线采样全部在本地完成，设备不动作）。</p>
+      <ul style="padding-left: 1.1em">
+        <li>公仔插到位、急停健康、电阻编号与角色文件一致。</li>
+        <li>启动本机服务：<span class="num">python -m host.main --simulate</span>。</li>
+        <li>下发时接口校验预期 role_id 与动作版本，角色已变更会被拒绝。</li>
+      </ul>
+    </div>
+    <div class="dlg__actions"><button class="btn btn--primary" type="button" id="guide-close">知道了</button></div>
+  </dialog>
+
+  <noscript><p style="padding: var(--space-6)">本编排器需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('editor');
+  </script>
+
+
+</body></html>

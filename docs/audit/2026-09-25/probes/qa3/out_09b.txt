@@ -1,0 +1,39 @@
+GET memories profile_id=9*40                 status=500 body=b'Internal Server Error'
+DELETE reminders id=9*30                     status=500 body=b'Internal Server Error'
+POST reminders bad due                       status=500 body=b'Internal Server Error'
+POST reminders huge-year                     status=500 body=b'Internal Server Error'
+GET memories profile_id=9*10                 status=200 envelope=True body=b'{"code":0,"data":[],"message":""}'
+GET memories profile_id=9*18                 status=200 envelope=True body=b'{"code":0,"data":[],"message":""}'
+GET memories profile_id=9*19                 status=500 body=b'Internal Server Error'
+GET memories profile_id=9*20                 status=500 body=b'Internal Server Error'
+GET memories profile_id=9*30                 status=500 body=b'Internal Server Error'
+GET memories profile_id=9*100                status=500 body=b'Internal Server Error'
+GET memories profile_id=9*4000               status=500 body=b'Internal Server Error'
+GET memories profile_id=9*4300               status=500 body=b'Internal Server Error'
+GET memories profile_id=9*5000               status=422 envelope=True body=b'{"code":42200,"data":null,"message":"\xe9\x9d\x9e\xe6\xb3\x95\xe6\xa1\xa3\xe6\xa1\x88\xe7\xbc\x96\xe5\x8f\xb7: 99999999999999999999999999999999999999999999999999999'
+
+--- 服务端日志中的未捕获异常 ---
+2026-09-25 00:24:48,268 INFO host.main: 主机服务就绪：http://127.0.0.1:1722（simulate=True，AI=stub）
+INFO:     Started server process [34196]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:1722 (Press CTRL+C to quit)
+INFO:     127.0.0.1:1723 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1734 - "GET /api/v1/memories?profile_id=9999999999999999999999999999999999999999 HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 411, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Lib\site-packages\fastapi\applications.py", line 1138, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Admini
+................
+SERVER_EXIT done

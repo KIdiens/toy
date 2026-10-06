@@ -1,0 +1,24 @@
+STATUS 200 {'code': 0, 'data': {'state': 'IDLE', 'mcu_armed': False, 'docked': True, 'estop_healthy': True, 'role_id': 1, 'session_generation': 1, 'network_online': False, 'fault': None, 'action': None, 'worker_alive': True, 'worker_faults': 0}, 'message': ''}
+PRESS1 200 {'code': 0, 'data': {'state': 'RECORDING'}, 'message': ''}
+AFTER1 {'code': 0, 'data': {'state': 'RECORDING', 'mcu_armed': False, 'docked': True, 'estop_healthy': True, 'role_id': 1, 'session_generation': 1, 'network_online': False, 'fault': None, 'action': None, 'worker_alive': True, 'worker_faults': 0}, 'message': ''}
+PRESS2 200 {'code': 0, 'data': {'state': 'THINKING'}, 'message': ''}
+t=0.0s state=SPEAKING gen=1 alive=True faults=0
+t=0.2s state=SPEAKING gen=1 alive=True faults=0
+t=0.4s state=IDLE gen=2 alive=True faults=0
+SERVER_EXIT 1
+--- server log tail ---
+2026-09-25 00:18:35,795 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:18:35,803 INFO host.main: 主机服务就绪：http://127.0.0.1:13341（simulate=True，AI=stub）
+INFO:     Started server process [24096]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:13341 (Press CTRL+C to quit)
+INFO:     127.0.0.1:13342 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:13347 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:13348 - "POST /api/v1/dev/button HTTP/1.1" 200 OK
+INFO:     127.0.0.1:13351 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:13352 - "POST /api/v1/dev/button HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6338 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6339 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6340 - "GET /api/v1/status HTTP/1.1" 200 OK
+

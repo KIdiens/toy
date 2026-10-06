@@ -1,0 +1,28 @@
+===== 信号 C rc=1 是否执行 finally =====
+finally(开始收尾) 出现? False
+--- 全量输出 ---
+2026-09-25 00:31:12,048 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:31:12,055 INFO host.main: 主机服务就绪：http://127.0.0.1:12490（simulate=True，AI=stub）
+INFO:     Started server process [26916]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:12490 (Press CTRL+C to quit)
+INFO:     127.0.0.1:12504 - "GET /api/v1/status HTTP/1.1" 200 OK
+
+--- /全量输出 ---
+===== 信号 BREAK rc=3 是否执行 finally =====
+finally(开始收尾) 出现? False
+--- 全量输出 ---
+2026-09-25 00:31:25,698 INFO host: active role -> 1 (1.0.0)
+2026-09-25 00:31:25,706 INFO host.main: 主机服务就绪：http://127.0.0.1:8677（simulate=True，AI=stub）
+INFO:     Started server process [37796]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8677 (Press CTRL+C to quit)
+INFO:     127.0.0.1:8952 - "GET /api/v1/status HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [37796]
+
+--- /全量输出 ---

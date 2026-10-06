@@ -1,0 +1,18 @@
+rc: 1
+--- STDOUT ---
+
+--- STDERR ---
+Traceback (most recent call last):
+  File "F:\AI智能底座玩具\_audit_qa3\_block_serial.py", line 13, in <module>
+    import host.main
+  File "F:\AI智能底座玩具\toy\host\main.py", line 20, in <module>
+    from host.adapters.runtime import build_context
+  File "F:\AI智能底座玩具\toy\host\adapters\runtime.py", line 28, in <module>
+    from host.motion.serial_link import SerialLink
+  File "F:\AI智能底座玩具\toy\host\motion\serial_link.py", line 9, in <module>
+    import serial  # pyserial==3.5
+    ^^^^^^^^^^^^^
+  File "F:\AI智能底座玩具\_audit_qa3\_block_serial.py", line 8, in find_spec
+    raise ImportError("[probe] 已屏蔽依赖: " + name)
+ImportError: [probe] 已屏蔽依赖: serial
+

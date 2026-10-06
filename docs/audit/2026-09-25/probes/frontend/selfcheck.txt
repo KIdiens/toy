@@ -1,0 +1,70 @@
+=== 1) 鏂囦欢涓庤鏁帮紙纭害鏉燂細婧愭枃浠?鈮?00 琛岋級 ===
+     185  api.js
+      52  app.js
+     115  components\axis.js
+      96  components\base.js
+     216  components\chrome.js
+     177  components\editor-chrome.js
+     157  components\editor-inspector.js
+     161  components\memories.js
+     261  components\reminders.js
+      67  components\settings-content.js
+     120  components\settings-danger.js
+     183  components\settings-sections.js
+     172  components\status.js
+     186  components\timeline-ui.js
+      98  editor.html
+      84  index.html
+      66  memories.html
+     298  pages\editor.js
+     102  pages\memories.js
+     123  pages\reminders.js
+     115  pages\settings.js
+     117  pages\status.js
+      53  reminders.html
+      83  settings.html
+     103  styles-editor.css
+     208  styles.css
+     173  timeline.js
+     110  vendor\lucide-icons.js
+   OVER-300: 鏃?
+
+=== 2) Emoji 鎵弿锛堣寖鍥?1F300-1FAFF/2600-27BF/2190-21FF/1F1E6-1F1FF/FE0F锛?===
+   鍛戒腑鏁? 0
+
+=== 3) 瀛楅潰鑹插€兼壂鎻忥紙渚嬪锛?fff/#000 涓?design-tokens.css锛?===
+   鍛戒腑鏁? 0
+   tokens 鏂囦欢鏄惁鍞竴鍚壊鍊艰惤鐐? host\web\design\design-tokens.css 瀛樺湪= True
+
+=== 4) 绱矇娓愬彉鎵弿 ===
+   鍛戒腑鏁? 0 []
+
+=== 5) 鍥炬爣 ID 鏍搁獙锛堟瘡涓敤鍒扮殑 ic()/iconMarkup() 蹇呴』鍦?fixture 鍐咃級 ===
+   浣跨敤鍥炬爣鏁? 37
+   涓嶅湪 fixture 涓殑: 鏃?
+   绂荤嚎鍖呭唴鍥炬爣鏁? 89 | 鐢ㄤ絾鏈墦鍖? []
+   鎵撳寘浣嗕笉鍦?fixture: []
+
+=== 6) 缁撴瀯鑷锛氶〉闈?濂戠害绔偣瑕嗙洊 ===
+   index.html: OK
+   editor.html: OK
+   memories.html: OK
+   reminders.html: OK
+   settings.html: OK
+   api.js: OK
+   app.js: OK
+   timeline.js: OK
+   styles.css: OK
+   styles-editor.css: OK
+   api 瑕嗙洊 /status: OK
+   api 瑕嗙洊 /roles: OK
+   api 瑕嗙洊 /roles/active: OK
+   api 瑕嗙洊 /actions/validate: OK
+   api 瑕嗙洊 /actions/play: OK
+   api 瑕嗙洊 /actions/stop: OK
+   api 瑕嗙洊 /content/import: OK
+   api 瑕嗙洊 /memories: OK
+   api 瑕嗙洊 /reminders: OK
+   api 瑕嗙洊 /settings: OK
+   api 瑕嗙洊 /features: OK
+   api 瑕嗙洊 /events: OK

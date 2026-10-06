@@ -1,0 +1,31 @@
+action files: 200 {'code': 0, 'data': [{'name': 'nod', 'active': True}, {'name': 'wave', 'active': False}], 'message': ''}
+use action: nod
+
+== A: 30 并发 play（同动作）==
+codes: {409: 29, 200: 1}   <- 期望 1x200, 29x409
+200 count: 1 PASS
+after-A: PERFORMING action: {'action_id': 'nod', 'seq': 0, 'progress_ms': 0}
+
+== B: play/stop 交叉 20 路 ==
+codes: {409: 7, 200: 13}
+after-B: IDLE alive: True faults: 0
+
+== C: 切角色×play×按键 三路交叉 24 路 ==
+codes: {409: 14, 200: 10}
+
+== 收敛观察 ==
+   ('THINKING', 6, True)
+   ('THINKING', 6, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+   ('IDLE', 7, True)
+final: ('IDLE', 7, True)
+alive throughout? True
+roles: [1, 2, 3] status.role_id: 1
+
+SERVER_EXIT 1

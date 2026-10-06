@@ -1,0 +1,13 @@
+baseline: 200 IDLE
+normal create: 201 envelope ok: True
+外部已持 BEGIN EXCLUSIVE 锁
+锁中写入 -> status=500 耗时5.5s body=Internal Server Error
+锁中读取 -> status=200 body={'code': 0, 'data': [], 'message': ''}
+锁已释放
+释放后写入 -> status= 201 code= 0
+after: state IDLE alive True faults 0
+
+--- 服务端异常日志 ---
+   INFO:     127.0.0.1:8577 - "POST /api/v1/reminders HTTP/1.1" 500 Internal Server Error
+   Traceback (most recent call last):
+   sqlite3.OperationalError: database is locked

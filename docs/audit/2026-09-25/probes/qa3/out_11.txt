@@ -1,0 +1,9 @@
+== SIGKILL 场景 ==
+[rec/kill] state@kill=RECORDING rc=1 integrity=ok reminders=1
+[think/kill] state@kill=SPEAKING rc=1 integrity=ok reminders=1
+[speak/kill] state@kill=SPEAKING rc=1 integrity=ok reminders=1
+
+== CTRL_BREAK（优雅）场景 ==
+[graceful/break] rc=3 integrity=ok reminders=1
+
+ALL_INTEGRITY_OK: True

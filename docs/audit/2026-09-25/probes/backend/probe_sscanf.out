@@ -1,0 +1,27 @@
+=== ARM: firmware(sscanf==1) vs sim(parse_arm is not None) ===
+'ARM 1'                  fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM 1 '                 fw_ok=True  sim_ok=False sscanf_rc=1   <<< MISMATCH
+'ARM 1  '                fw_ok=True  sim_ok=False sscanf_rc=1   <<< MISMATCH
+'ARM 1\t'                fw_ok=True  sim_ok=False sscanf_rc=1   <<< MISMATCH
+'ARM 1 2'                fw_ok=False sim_ok=False sscanf_rc=2
+'ARM 1 x'                fw_ok=False sim_ok=False sscanf_rc=2
+'ARM1'                   fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM 12'                 fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM  12'                fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM +1'                 fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM -1'                 fw_ok=True  sim_ok=True  sscanf_rc=1
+'ARM'                    fw_ok=False sim_ok=False sscanf_rc=-1
+'ARM '                   fw_ok=False sim_ok=False sscanf_rc=-1
+
+=== FRAME: firmware(sscanf==5) vs sim(parse_frame is not None) ===
+'FRAME 0 1500 1550 1500 1500'            fw_ok=True  sim_ok=True  sscanf_rc=5
+'FRAME 0 1500 1550 1500 1500 '           fw_ok=True  sim_ok=False sscanf_rc=5   <<< MISMATCH
+'FRAME 0 1500 1550 1500 1500  '          fw_ok=True  sim_ok=False sscanf_rc=5   <<< MISMATCH
+'FRAME 0 1500 1550 1500 1500\t'          fw_ok=True  sim_ok=False sscanf_rc=5   <<< MISMATCH
+'FRAME 0 1500 1550 1500 1500 9'          fw_ok=False sim_ok=False sscanf_rc=6
+'FRAME 0 1500 1550 1500'                 fw_ok=False sim_ok=True  sscanf_rc=4   <<< MISMATCH
+'FRAME 0 1500 1550 1500 1500 x'          fw_ok=False sim_ok=False sscanf_rc=6
+'FRAME 0 1500 1550 1500 1600'            fw_ok=True  sim_ok=True  sscanf_rc=5
+'FRAME -1 1500 1550 1500 1500'           fw_ok=True  sim_ok=True  sscanf_rc=5
+
+TOTAL MISMATCHES: 7

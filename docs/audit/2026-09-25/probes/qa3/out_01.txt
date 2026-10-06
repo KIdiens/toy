@@ -1,0 +1,22 @@
+== baseline ==
+status 200 {'state': 'IDLE', 'mcu_armed': False, 'docked': True, 'estop_healthy': True, 'role_id': 1, 'session_generation': 1, 'network_online': False, 'fault': None, 'action': None, 'worker_alive': True, 'worker_faults': 0}
+
+== 风暴A：40 并发按键 n=1 ==
+HTTP codes: {200: 40} errors: []
+after-A state: RECORDING gen: 4 alive: True faults: 0
+state legal? True
+
+== 风暴B：30 并发混合按键 1/2/3 ==
+perform codes: {200: 30} errors: []
+after-B state: PERFORMING gen: 19 alive: True faults: 0
+
+== 收敛观察（每 0.3s 一次，共 5s）==
+states: ['PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING', 'PERFORMING']
+final: PERFORMING stuck(RECORDING/THINKING at end)? False
+
+== 故障锁定 + 按键风暴 ==
+fault-locked codes: {200: 20} state: FAULT_LOCKED
+
+worker log faults lines:
+
+SERVER_EXIT 1

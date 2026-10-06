@@ -1,0 +1,10 @@
+=== A) CTRL_BREAK 优雅关停：finally 是否执行 close() ===
+rc: 3
+   LOG: INFO:     Waiting for application shutdown.
+   LOG: INFO:     Application shutdown complete.
+  finally 行出现? False
+
+=== B) 并发写库中途硬杀 → integrity ===
+kill 前写入请求数≈ 490
+integrity: ok rows: 491 half-write rows: 0
+重启可用? True
