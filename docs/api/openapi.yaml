@@ -574,7 +574,7 @@ components:
         id: { type: string }
         profile_id: { type: string }
         text: { type: string }
-        due_at_utc: { type: string, format: date-time }
+        due_at_utc: { type: string, format: date-time, nullable: true }
         timezone: { type: string, example: Asia/Shanghai }
         repeat_rule: { type: string, nullable: true }
         status: { type: string, enum: [pending, fired, missed, cancelled] }

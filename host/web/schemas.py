@@ -132,7 +132,10 @@ class ReminderOut(BaseModel):
     id: str
     profile_id: str
     text: str
-    due_at_utc: str
+    # 仓储层该列可空（``due_at_utc: str | None``），文档声明 ``format: date-time``。
+    # 空串不是合法 date-time，所以「没有值」必须是 ``None``，由 openapi 的
+    # ``nullable: true`` 表达 —— 若这里留成 ``str``，DTO 的None 会直接 500。
+    due_at_utc: str | None = None
     timezone: str
     repeat_rule: str | None = None
     status: str

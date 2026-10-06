@@ -66,11 +66,24 @@ class Recorder:
 
     def _postprocess(self, recorded: Recording, limit: float) -> Recording:
         pcm = recorded.data
-        duration = recorded.duration_s or _frames(pcm, recorded.channels) / recorded.sample_rate
-        if duration > limit + 1e-6:
-            keep = int(limit * recorded.sample_rate) * 2 * recorded.channels
-            pcm = pcm[:keep]
-            duration = limit
+        # 采样率非正时，时长**无法从帧数推导**（除零），截断长度也无从计算
+        # （keep = int(limit * 0) * 2 * channels == 0，会把整段 PCM 砍成空字节 ——
+        # 实测 1600B → 0B，静默销毁录音）。故此时不做推导也不做截断，
+        # 原样透传后端给的时长（没有就是 0.0）。
+        #
+        # 实测否定了「``rate = recorded.sample_rate or 1``」这个看似最小的修法：
+        # 除数换成 1 会算出 800s 的伪时长，进而把 1600B 截到 30B，还把
+        # ``has_speech`` 翻成 True —— 那是**更坏**的静默数据损坏。
+        if recorded.sample_rate > 0:
+            duration = recorded.duration_s or (
+                _frames(pcm, recorded.channels) / recorded.sample_rate
+            )
+            if duration > limit + 1e-6:
+                keep = int(limit * recorded.sample_rate) * 2 * recorded.channels
+                pcm = pcm[:keep]
+                duration = limit
+        else:
+            duration = recorded.duration_s or 0.0
         has_speech = _rms(pcm) >= self.policy.silence_rms_floor
         return Recording(
             data=pcm,

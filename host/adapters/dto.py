@@ -31,11 +31,15 @@ def memory_dto(memory) -> dict[str, Any]:
 
 
 def reminder_dto(reminder) -> dict[str, Any]:
+    # `due_at_utc` 在仓储层是 ``str | None``（DDL 里该列可空），文档声明
+    # ``format: date-time``。空串**不是**合法 RFC 3339 date-time——把 None 洗成 ""
+    # 会让响应带一个非法字面量，按文档生成的客户端解析即炸。故此处保留 None，
+    # 由``ReminderOut`` 与 openapi 的 ``nullable: true`` 表达「可能没有值」。
     return {
         "id": str(reminder.id),
         "profile_id": "" if reminder.profile_id is None else str(reminder.profile_id),
         "text": reminder.text or "",
-        "due_at_utc": reminder.due_at_utc or "",
+        "due_at_utc": reminder.due_at_utc,
         "timezone": reminder.timezone or "",
         "repeat_rule": reminder.repeat_rule,
         "status": reminder.status or "pending",
