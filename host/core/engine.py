@@ -88,7 +88,7 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
         action = trigger_for_button(machine.state, int(event.payload.get("n", 0)))
         if action in (BUTTON_NOOP, BUTTON_DISCARD):
             return []
-        commands = engine.apply(action, event.payload, event.generation)
+        commands = engine.apply(action, event.payload)
         if action == Trigger.VOLUME_PRESS.value:
             # 音量键是**内部迁移**（不改状态、不产生 EXIT/ENTER 命令），它的实际效果是
             # 「音量档位进一档」。这条接线此前完全缺失——`Player.cycle_level()` 在生产代码里
@@ -104,18 +104,18 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
             commands = [_mark_greet(c) for c in commands]
         return commands
     if kind in (EventKind.MCU_FAULT, EventKind.MCU_ERROR):
-        return engine.apply(Trigger.SAFETY_TRIP, event.payload, event.generation)
+        return engine.apply(Trigger.SAFETY_TRIP, event.payload)
     if kind is EventKind.MCU_STATE:
         line = event.payload.get("state")
         if line and (line[1] == 0 or line[2] == 0):
-            return engine.apply(Trigger.SAFETY_TRIP, event.payload, event.generation)
+            return engine.apply(Trigger.SAFETY_TRIP, event.payload)
         return []
     if kind in STALE_SENSITIVE and event.generation != machine.generation:
         return []  # 换角色/取消后的迟到回包一律丢弃（AC-15）
     trigger = EVENT_TRIGGERS.get(kind)
     if trigger is None:
         return []
-    return engine.apply(trigger, event.payload, event.generation)
+    return engine.apply(trigger, event.payload)
 
 
 def _mark_greet(command: Command) -> Command:
@@ -159,7 +159,7 @@ class Engine:
         self.bus.publish(event)
 
     def apply(
-        self, trigger: Trigger | str, payload: Mapping | None = None, generation: int = 0
+        self, trigger: Trigger | str, payload: Mapping | None = None
     ) -> list[Command]:
         """驱动状态机并按迁移发出命令；非法迁移返回空列表（不抛异常）。
 
@@ -167,6 +167,16 @@ class Engine:
         EXIT 命令必须携带**迁移之前**的代数——它描述的是「正在离开的那个会话」。若误用迁移
         后的代数，取消录音时下游 ``_finish_recording`` 会判代数不符而走兜底，凭空多录一段。
         ENTER / NOTIFY 描述的才是「刚进入的新会话」，用迁移后的代数。
+
+        **这里没有``generation`` 形参（曾有过一个自始未被引用的死参，已删）**：
+        命令代数一律现取自 ``state_machine``。陈旧判定属于**事件路由**的职责，
+        发生在 ``default_dispatcher``（``kind in STALE_SENSITIVE`` 分支）——
+        早于本函数。把代数当形参传进来，等于让调用方以为「传了就会按我传的算」，
+        而实现在``or`` 兜底下会让「不传」与「传 0」行为不同、却无人察觉。
+        顺带核实过：即使把形参真的接上（``generation or machine.generation``），
+        当前 4 个 ``default_dispatcher`` 调用点传的 ``event.generation`` 在此本就
+        等于 ``machine.generation``（陈旧事件已被上游丢弃），全量测试同样全绿——
+        所以删它零行为变化，纯粹是移除一个会误导读者的接口。
         """
         machine = self.state_machine
         pre_generation = machine.generation
