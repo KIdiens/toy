@@ -50,28 +50,41 @@ def test_apply_no_longer_accepts_a_generation_parameter() -> None:
 
 
 def test_no_caller_still_passes_a_third_positional_argument() -> None:
-    """源码级巡检：防止将来有人 ``engine.apply(trig, payload, gen)`` 撞TypeError。
+    """源码级巡检：防止将来有人 ``engine.apply(trig, payload, gen)`` 撞 TypeError。
 
     真实后果是 ``TypeError`` 打穿 ``default_dispatcher`` → 事件处理线程，
-    而事件处理异常会被 ``adapters/workers.py`` 的宽 catch 吞成worker_faults
+    而事件处理异常会被 ``adapters/workers.py`` 的宽catch 吞成 worker_faults
     计数 —— 表现是「按键偶尔没反应且日志里只有一条 worker 异常」。
+
+    **用 ``ast`` 而不是数逗号。** 本文件第一版是 ``line.count(",") >= 2``，
+    只能看单行；而9 个生产调用点里有 3 处是跨行的
+    （``execution.py:59``、``injection.py:79``、``ports.py:274``），
+    往那 3 处注入第三实参，巡检报15 passed —— 漏放。
+    （当时注释里写着「跨行调用另有下面一条」，但那条测试并不存在。）
+
+    ``ast`` 对 ``func(a, b,\\n c)`` 与 ``func(a, b, c)`` 一视同仁，
+    且能区分 ``f(a, b)`` 与 ``f(*args)``：``Starred`` 不是实参，
+    不该当第三实参计数。
     """
+    import ast
     import pathlib
 
     offenders: list[str] = []
     for path in sorted(pathlib.Path("host").rglob("*.py")):
-        for lineno, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if "engine.apply(" not in line and ".apply(" not in line:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            if "def apply" in line:
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "apply":
                 continue
-            # 数一下 apply( 之后的顶层逗号（只看单行调用，跨行调用另有下面一条）
-            inner = line.split(".apply(", 1)[1]
-            if inner.count(",") >= 2 and ")" in inner:
-                offenders.append(f"{path}:{lineno}: {line.strip()}")
-    assert not offenders, "仍有人在 apply() 传第三个实参：\n" + "\n".join(offenders)
+            if not (len(node.args) >= 3 or any(
+                    isinstance(a, ast.Starred) for a in node.args)):
+                continue
+            offenders.append(
+                f"{path}:{node.lineno}: {ast.unparse(node)[:90]}"
+            )
+    assert not offenders, "仍有人在 apply() 传第三实参或解包：\n" + "\n".join(offenders)
 
 
 # =====================================================================

@@ -62,6 +62,12 @@ def _read() -> str:
 def _component_block(name: str) -> str:
     """截取 ``components/schemas/<name>`` 到下一个同级 schema 名之间的内容。"""
     text = _read()
+    if f"\n    {name}:\n" not in text:
+        pytest.fail(
+            f"openapi.yaml 里找不到 components/schemas/{name}。"
+            "若该 schema 已改名/删除，请同步更新本测试；"
+            "若只是挪了位置，那是本测试的定位方式需要改。"
+        )
     start = text.index(f"\n    {name}:\n")
     lines = text[start + 1:].splitlines()
     collected: list[str] = []
@@ -74,9 +80,19 @@ def _component_block(name: str) -> str:
 
 
 def _operation_block(operation_id: str) -> str:
-    """截取某个 operation（按 ``operationId`` 定位）到下一个同级 operation 为止。"""
+    """截取某个 operation（按 ``operationId`` 定位）到下一个同级 operation 为止。
+
+    定位失败时抛**带锚点名字**的断言，而不是裸 ``ValueError`` ——
+    否则报错只说 ``substring not found``，读的人得自己去猜是哪个 operationId。
+    """
     text = _read()
     anchor = f"operationId: {operation_id}\n"
+    if anchor not in text:
+        pytest.fail(
+            f"openapi.yaml 里找不到 operationId={operation_id}。"
+            "若该接口已改名/ 删除，请同步更新本测试的 REQUEST_SITES；"
+            "若只是路径挪了位置，那是本测试的定位方式需要改。"
+        )
     start = text.index(anchor)
     lines = text[start:].splitlines()
     collected: list[str] = []
@@ -168,16 +184,46 @@ def test_response_side_role_id_has_no_bounds(schema_name: str) -> None:
 # 3. 与代码真源的绑定（代码改了文档必须跟着重估）
 # =====================================================================
 def test_request_models_in_code_really_have_both_bounds() -> None:
-    """代码侧 ``ge=1, le=3`` 若被去掉，本文件的文档断言就该跟着重估。
+    """代码侧必须是**恰好** ``ge=1, le=3``，与文档声称的边界逐值对齐。
 
-    这是「文档声称的边界」与「实现真正强制的边界」的对照点：
-    若实现放宽成不校验，文档就不该继续声称有边界。
+    这是「文档声称的边界」与「实现真正强制的边界」的对照点。
+
+    **不能只判``field.metadata`` 非空**（本文件第一版就是这么写的，假绿）：
+    那样只能抓住「约束被整个删掉」，抓不住「约束被改错」——
+    实测把 ``le=3`` 改成 ``le=9``（文档仍写 ``maximum: 3``）时全绿通过。
+    边界漂移必须是**值相等**才算对齐。
+
+    若实现真的放宽成不校验，或收窄成别的区间，本条转红，
+    提醒文档那侧的断言需要重新评估。
     """
+    from annotated_types import Ge, Le
     from host.web import schemas
 
     for model in (schemas.ActiveRolePatch, schemas.ActionPlayRequest):
         field = model.model_fields["role_id"]
-        assert field.metadata, f"{model.__name__}.role_id 的边界被去掉了"
+        lower = [m.ge for m in field.metadata if isinstance(m, Ge)]
+        upper = [m.le for m in field.metadata if isinstance(m, Le)]
+        assert lower == [1], f"{model.__name__}.role_id 下界是 {lower}，文档声称 minimum: 1"
+        assert upper == [3], f"{model.__name__}.role_id 上界是 {upper}，文档声称 maximum: 3"
+
+
+def test_code_boundaries_are_not_wider_than_documented_ones() -> None:
+    """反向约束：实现**不得比文档更宽**，否则文档就是在骗客户端。
+
+    这是上面那条的加强版：即使有人把边界改成不对称的值
+    （比如 ``ge=1`` 但去掉上界），文档侧的 ``maximum: 3`` 也失去了约束力。
+    """
+    from annotated_types import Ge, Le
+    from host.web import schemas
+
+    for model in (schemas.ActiveRolePatch, schemas.ActionPlayRequest):
+        field = model.model_fields["role_id"]
+        assert any(isinstance(m, Ge) for m in field.metadata), (
+            f"{model.__name__}.role_id 没有下界，文档却写着 minimum: 1"
+        )
+        assert any(isinstance(m, Le) for m in field.metadata), (
+            f"{model.__name__}.role_id 没有上界，文档却写着 maximum: 3"
+        )
 
 
 def test_response_models_in_code_really_have_no_bounds() -> None:
