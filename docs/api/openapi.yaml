@@ -484,7 +484,7 @@ components:
       type: object
       required: [request_id, role_id, action_id]
       properties:
-        request_id: { type: string }
+        request_id: { type: string, minLength: 1 }
         role_id:
           type: integer
           minimum: 1
@@ -492,6 +492,8 @@ components:
           description: 预期角色编号；与当前角色不符则拒绝（防网页缓存串角色）
         action_id:
           type: string
+          minLength: 1
+          maxLength: 60
           description: 当前角色动作白名单中的动作 ID（非文件路径）
         action_version: { type: string }
         replace_current:
@@ -583,13 +585,13 @@ components:
       type: object
       required: [request_id, profile_id, text, due_at_utc, timezone]
       properties:
-        request_id: { type: string }
-        profile_id: { type: string }
-        text: { type: string, maxLength: 200 }
-        due_at_utc: { type: string, format: date-time }
+        request_id: { type: string, minLength: 1 }
+        profile_id: { type: string, minLength: 1 }
+        text: { type: string, minLength: 1, maxLength: 200 }
+        due_at_utc: { type: string, format: date-time, minLength: 1 }
         timezone: { type: string, default: Asia/Shanghai }
         repeat_rule: { type: string, nullable: true }
-        idempotency_key: { type: string }
+        idempotency_key: { type: string, nullable: true, maxLength: 64 }
 
     Settings:
       type: object
