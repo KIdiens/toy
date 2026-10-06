@@ -47,4 +47,22 @@ cd F:/AI智能底座玩具/toy
 python docs/audit/2026-10-07-batches/probes/g4/repro_g4.py
 ```
 
-探针会自建 tmp 目录，不碰仓库。
+探针会自建tmp 目录，不碰仓库。
+
+## 第 5 组 · worker_faults 竞态 + 启动期异常裸奔
+
+详见 [`README-g5.md`](README-g5.md)。两个缺陷结论不同：
+
+- **`worker_faults` 非原子自增 → 实测判定不可触发，不加锁。**
+  阳性对照（Python 层 `__setattr__`）丢 30%~40%，真实形态在
+  `switchinterval=1e-9` 下仍是 0 丢。只补注释与前提护栏，不改逻辑。
+- **`main()` 启动期异常裸奔 → 真实缺陷，已修。**
+  修复前 4 种故障退出码全是 1、末行全是裸英文异常名；修复后配置错返回 2、
+  运行时环境错返回 3，末行是一行中文指引。
+
+`probes/g5/` 下 2 个可重跑探针：
+
+| 探针 | 用途 |
+|---|---|
+| `probe_worker_faults_race.py` | 判定丢计数是否可触发（含阳性对照，四段数据） |
+| `probe_main_startup.py` | 真子进程复现 5 种启动失败，抓退出码与末行 |

@@ -71,6 +71,25 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     # 存活探针要靠它判活，见 worker_alive() 的说明。
     _motion_thread: Any = field(default=None, repr=False)
     worker_heartbeat_ms: int | None = None
+    # 诊断计数器：由 execution.run_forever 的兜底 except 与 workers._on_worker_error
+    # 各自 `+= 1`。**为什么明知非原子也不加锁**（实测结论，非推测）：
+    #
+    # 1. 影响面已核实：唯一消费方是下面 status_snapshot 里的 `int(self.worker_faults)`，
+    #    只做 /status 诊断显示，全仓无任何逻辑分支读它的值（无阈值判断、无重试计数）。
+    #    即丢计数最坏结果是「诊断数字偏小」，不可能导致状态机错乱。
+    # 2. 竞态在 CPython 3.11+ 实测**不可触发**：字节码是
+    #    LOAD_ATTR → BINARY_OP → STORE_ATTR，中间既无 CALL 也无向后跳转，
+    #    而 CPython 只在这两处检查线程切换；STORE_ATTR 走的是 C 层 slot wrapper
+    #    （MRO 里只有 object.__setattr__，无 Python 层 __setattr__），
+    #    故整个读-改-写之间不存在可切换点。
+    # 3. 探针的判别力是验证过的，不是假设：同一个 `+= 1`，把 STORE_ATTR 换成
+    #    Python 层 __setattr__ 后立刻丢 30%~40%（见
+    #    docs/audit/2026-10-07-batches/probes/g5/probe_worker_faults_race.py 的 B 段
+    #    阳性对照）；而真实形态在 switchinterval 调到 1e-9 时仍是 0 丢。
+    #
+    # 什么时候需要重新评估：若将来 free-threading（无 GIL）构建、或把该字段改成
+    #    property / 加 __setattr__，上述前提就不再成立，应改用 `itertools.count`
+    #    或加锁。`test_worker_faults_counter_has_no_race.py` 会在前提被破坏时转红。
     worker_faults: int = 0
     fired_reminders: list = field(default_factory=list)
     # ---- 对话闭环的录音/超时状态（net↔audio 协作）----

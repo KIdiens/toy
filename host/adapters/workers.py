@@ -299,6 +299,8 @@ class WorkersMixin:
         )
 
     def _on_worker_error(self, worker: str, exc: Exception) -> None:
+        # 裸自增实测不丢计数（同 execution.py 的注释与 ports.py 的字段说明）。
+        # 只被 /status 读作诊断显示，无逻辑分支依赖其值，故不加锁。
         self.worker_faults += 1
         if self.log is not None:
             self.log.error("[%s worker] 异常（已捕获，线程继续运行）：%s",

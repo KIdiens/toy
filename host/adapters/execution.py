@@ -217,6 +217,9 @@ class ExecutionMixin:
                 else:
                     self.dispatch_bus()
             except Exception as exc:  # noqa: BLE001  兜底：线程存活优先于单次失败
+                #裸自增**实测不会丢计数**，故意不加锁（理由与证据见 ports.py 的
+                # worker_faults 字段注释）。不要"顺手"改成读-改-写分步或加锁 ——
+                # 那会让真正的编程错误更难查，而诊断计数器精度不值得这个代价。
                 self.worker_faults += 1
                 if self.log is not None:
                     self.log.error("worker 循环异常（已捕获并降级继续）：%s", exc, exc_info=True)
