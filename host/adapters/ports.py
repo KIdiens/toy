@@ -174,11 +174,49 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
 
     # ---------- 角色切换 ----------
     def switch_active_role(self, role_id: int) -> dict[str, Any]:
+        """切换激活角色；THINKING 中先**取消本轮**再切（见 :meth:`_abort_thinking_round`）。
+
+        **为什么 THINKING 不进拒绝列表**：换角色本来就会让旧回包作废（代数 +1），
+        这一轮对话**已经作废**，继续等 AI 回答毫无意义。而「拒绝」是把一个本可立刻
+        完成的操作变成用户的负担 —— 用户在等回答时最想换的恰恰就是角色。
+        """
         with self._lock:
             if self.motion_busy or self.state_machine.state in (State.PERFORMING, State.RECORDING):
                 raise ConflictError("当前状态不允许切换角色（正在运动或录音）")
+            self._abort_thinking_round()
             config = self.roles.set_active(int(role_id))  # 切换即 session_generation += 1
             return {"role_id": config.role_id, "config_version": config.config_version}
+
+    def _abort_thinking_round(self) -> None:
+        """THINKING 期间换角色：先走既有 ``DIALOG_PRESS`` 迁移取消本轮，让状态立即收敛。
+
+        **修的是什么（实测复现）**：守卫只拦 ``PERFORMING`` / ``RECORDING``，不含
+        ``THINKING``。于是换角色在等待期被放行、代数 +1 使旧回包作废，但**没人结束
+        这一轮** —— 设备静默停在 THINKING，直到 ``NET_THINKING_TIMEOUT_S``（60s）
+        的 tick 兜底才回退 AI_FAIL。换一次角色白等一分钟。
+
+        **为什么用「取消」而不是「拒绝」**：见 :meth:`switch_active_role` 的说明。
+
+        **为什么能安全地顺带收敛**（逐条实测，见报告）：
+        - ``(THINKING, DIALOG_PRESS) -> IDLE`` 是状态表里现成的迁移，且**进入 IDLE
+          本身就会代数 +1**，所以「取消 + 换角色」共 +2；
+        - 代数只被用于 ``!=`` 相等比较（陈旧回包判定、命令丢弃），全仓**没有**任何
+          处做代数的相对运算、也没有以代数为下标的容器，故 +2 与 +1 语义等价；
+        - 该迁移的下发命令是 ``STOP_AUDIO`` / ``STOP_MOTION``，与「本轮作废」一致。
+
+        **只处理 THINKING，不动 SPEAKING**：``SPEAKING`` 的出边里没有「取消本轮」这个
+        概念 —— ``(SPEAKING, DIALOG_PRESS)`` 指向 ``RECORDING``（先停播再录），
+        拿它来「取消」会直接开始录音，把静默滞留换成更糟的误触发。而 SPEAKING 本来
+        就有确定性出口：``PLAY_DONE`` **不在** ``STALE_SENSITIVE`` 里，且
+        ``_play_clip`` 无条件回投它（clip 为 None 也回投），所以换角色后仍会自行
+        收敛到 IDLE，不存在 60s 静默。
+        """
+        if self.state_machine.state is not State.THINKING:
+            return
+        # 先预判再动手：迁移不存在时不留下「什么都没发生」的静默失败。
+        if self.state_machine.destination(Trigger.DIALOG_PRESS) is not State.IDLE:
+            return
+        self._deliver(self.engine.apply(Trigger.DIALOG_PRESS, {"reason": "role_switch"}))
 
     # ---------- 动作校验 / 播放 / 停止 ----------
     def role_limits(self, role_id: Any) -> tuple[int, int]:

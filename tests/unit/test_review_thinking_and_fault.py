@@ -13,6 +13,14 @@ E1  ~~THINKING 期间换角色 → 永久驻留~~ —— **已证伪，不是缺
     保留下面两条作为**不回归护栏**：万一将来有人把兜底改成捕获「进入 THINKING
     时的旧代数」，这两条会立刻转红。
 
+    **第 6 组补记（重要）**：上面证伪的是「永久驻留」，**不等于**「换角色在
+    THINKING 中是安全的」—— 另一条独立缺陷（D7）是换角色后状态**静默留在
+    THINKING 直到 60s 兜底**，即「不会永久驻留，但要白等一分钟」。该缺陷已修
+    （``switch_active_role`` 在 THINKING 中先取消本轮再切），因此本文件两条护栏的
+    **触发路径**（换角色后仍停在 THINKING）已不复存在，改用「代数推进但状态仍是
+    THINKING」。**断言未放松，反而加码**（新增「兜底必须用当前代数发布」）。
+    详见两条用例的 docstring。
+
 E2  clear_fault 不校验硬件 → 假可用态（**成立，已复现**）
     固件语义（``sim/controller.py:loop_once``）：``armed and not docked()``
     会立即 ``stop_motion()`` 并回 ``FAULT INTERLOCK_OR_TIMEOUT``。
@@ -45,20 +53,35 @@ def _enter_thinking(ctx) -> None:
 
 # --------------------------------------------------------------------------- E1 护栏
 def test_thinking_timeout_survives_role_switch(ctx):
-    """【护栏，非缺陷】换角色后 THINKING 仍须能被超时兜底带回 IDLE。"""
+    """【护栏，非缺陷】THINKING 期间的 60s 兜底必须仍能把状态带回 IDLE。
+
+    **第 6 组改动：触发路径已换，断言一条未放松。**
+    原触发路径是「THINKING 中换角色 -> 仍停在 THINKING -> 60s 后兜底」。但第 6 组
+    修掉了D7（换角色在 THINKING 中静默滞留60s），``switch_active_role`` 现在会先
+    取消本轮当场收敛到 IDLE，那条路径**已不复存在**（实测：兜底连触发都没触发，
+    因为 ``_enforce_thinking_timeout`` 第一道 ``if state is not THINKING`` 就返回了）。
+
+    但护栏要守的性质——「兜底发布的 AI_FAIL 必须带**当前**代数，否则会被
+    STALE_SENSITIVE 当成迟到回包丢弃」——依然真实且必要：实测若兜底改用旧代数，
+    ``AI_FAIL`` 确实会被丢弃（``AI_FAIL in STALE_SENSITIVE == True``，旧代数 != 当前代数）。
+    故改用「代数推进了但状态仍是 THINKING」这条路径（``bump_generation()``，即任何
+    将来新增的代数递增路径）继续守同一条性质。
+    """
     ctx.start_workers()
     try:
         _enter_thinking(ctx)
         gen_before = ctx.state_machine.generation
-        ctx.switch_active_role(2)
-        assert ctx.state_machine.generation > gen_before, "换角色未推进代数，前置无效"
+        # 代数推进但**不**离开 THINKING —— 兜底必须用新代数发布，否则被当迟到回包丢弃
+        ctx.state_machine.bump_generation()
+        assert ctx.state_machine.generation > gen_before, "代数未推进，前置无效"
+        assert ctx.state_machine.state is State.THINKING, "前置无效：已离开 THINKING"
 
         ctx._thinking_since_ms = ctx.clock.now_ms() - 61_000
         ctx._enforce_thinking_timeout()
         ctx.drain()
 
         assert ctx.state_machine.state is not State.THINKING, (
-            "换角色后 60s 兜底失效：若 AI_FAIL 改用「进入 THINKING 时的旧代数」发布，"
+            "60s 兜底失效：若AI_FAIL 改用「进入 THINKING 时的旧代数」发布，"
             "会被 STALE_SENSITIVE 当作迟到回包丢弃，设备永久驻留 THINKING"
         )
     finally:
@@ -66,11 +89,17 @@ def test_thinking_timeout_survives_role_switch(ctx):
 
 
 def test_thinking_exit_does_not_speak_previous_role_reply(ctx, monkeypatch):
-    """【护栏，非缺陷】兜底只回 IDLE，绝不把上一轮回复在新角色下说出来。"""
+    """【护栏，非缺陷】兜底只回 IDLE，绝不把上一轮回复在新角色下说出来。
+
+    **第 6 组改动：触发路径同上已换，断言一条未放松**（理由见上一条 docstring）。
+    """
     ctx.start_workers()
     try:
         _enter_thinking(ctx)
-        ctx.switch_active_role(2)
+        stale_generation = ctx.state_machine.generation
+        # 让「上一轮回复」落在stale_generation 这一代，再推进代数模拟换角色
+        ctx.state_machine.bump_generation()
+        assert ctx.state_machine.state is State.THINKING
         ctx._thinking_since_ms = ctx.clock.now_ms() - 61_000
 
         spoke = []
@@ -89,6 +118,16 @@ def test_thinking_exit_does_not_speak_previous_role_reply(ctx, monkeypatch):
         assert EventKind.AI_FAIL in kinds, f"未回投 AI_FAIL，实际 {kinds}"
         assert EventKind.AI_DONE not in kinds, (
             f"兜底路径投了 AI_DONE（会把旧回复说出来）：{kinds}"
+        )
+        # 兜底必须用**当前**代数发布：否则这条 AI_FAIL 会被 STALE_SENSITIVE 丢弃
+        current = ctx.state_machine.generation
+        fail_gens = [g for k, _p, g in spoke if k is EventKind.AI_FAIL]
+        assert fail_gens and all(g == fail_gens[-1] for g in fail_gens), (
+            f"AI_FAIL 的代数应统一（当前 {current}），实际 {fail_gens}"
+        )
+        assert fail_gens[-1] != stale_generation, (
+            "兜底用了「进入 THINKING 时的旧代数」发布 —— 该事件会被 "
+            "STALE_SENSITIVE 当作迟到回包丢弃，兜底形同虚设"
         )
     finally:
         ctx.stop_workers()
