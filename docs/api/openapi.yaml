@@ -87,7 +87,7 @@ paths:
               required: [request_id, role_id]
               properties:
                 request_id: { type: string, minLength: 1 }
-                role_id: { type: integer, minimum: 1 }
+                role_id: { type: integer, minimum: 1, maximum: 3 }
       responses:
         '200':
           description: 已切换
@@ -487,6 +487,8 @@ components:
         request_id: { type: string }
         role_id:
           type: integer
+          minimum: 1
+          maximum: 3
           description: 预期角色编号；与当前角色不符则拒绝（防网页缓存串角色）
         action_id:
           type: string
