@@ -52,7 +52,27 @@ class StubWeatherClient:
 
 
 def make_handler(client: WeatherClient, *, timeout_s: float = DEFAULT_TIMEOUT_S):
-    """构造处理器：任何失败路径都返回 ``ok=False``，不产生任何捏造数据。"""
+    """构造处理器：任何失败路径都返回 ``ok=False``，不产生任何捏造数据。
+
+    捕获范围精确取 ``OSError``，理由有两条，都不是风格问题：
+
+    1. **必须放宽**：真实 provider 走 ``urllib`` / ``http.client``，
+       DNS 失败是 ``URLError``、连接被拒是 ``ConnectionRefusedError``、
+       TLS 失败是 ``SSLError`` —— 全都不是 ``TimeoutError``。
+       而 ``router.py`` 只捕 ``ToolValidationError``，异常一旦逃出工具层，
+       就会打穿整个 AI 回合（用户这一轮彻底没答复）。
+       实测 ``TimeoutError`` 本身就是 ``OSError`` 子类，
+       所以 ``except OSError`` 是严格放宽而非替换。
+
+    2. **不能更宽**：``except Exception`` 会把 ``fetch`` 内部的
+       ``AttributeError``（client 没有 ``fetch``）、``NameError``、
+       ``TypeError`` 一起吞成「天气服务超时」。那不是编造天气数据，
+       但它**伪造了故障原因**，让真实 bug 藏在「网络不稳定」这个
+       最容易被原谅的解释下再也查不出来。
+       同样刻意**不**捕获整个 ``http.client.HTTPException``：
+       它是混合体—— ``BadStatusLine`` / ``IncompleteRead`` 属对端问题，
+       而 ``InvalidURL`` / ``UnknownProtocol`` 属调用方代码 bug。
+    """
 
     def handler(args: dict[str, Any]) -> dict[str, Any]:
         city = str(args["city"])
@@ -60,6 +80,15 @@ def make_handler(client: WeatherClient, *, timeout_s: float = DEFAULT_TIMEOUT_S)
             result = client.fetch(city, timeout=timeout_s)
         except TimeoutError:
             return {"ok": False, "error": "天气服务超时，暂时查不到", "fabricated": False}
+        except OSError as exc:
+            # 非超时的传输层失败（DNS / 连接被拒 / TLS）。
+            # **不能也报「超时」**：那是运维上最常见的信号，报准了才能定位；
+            # 混为一谈会让间歇性故障无从下手。带上异常类型名即可区分。
+            return {
+                "ok": False,
+                "error": f"天气服务不可用，暂时查不到（{type(exc).__name__}）",
+                "fabricated": False,
+            }
         if not result.ok:
             return {"ok": False, "error": result.error, "fabricated": False}
         return {
