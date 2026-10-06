@@ -25,7 +25,6 @@ sys.path.insert(0, str(REPO))
 WORK = Path(__file__).resolve().parent / "_scratch"
 
 from fastapi.testclient import TestClient  # noqa: E402
-
 from host.adapters.dto import reminder_dto  # noqa: E402
 from host.adapters.runtime import build_context  # noqa: E402
 from host.audio.backend import Recording  # noqa: E402

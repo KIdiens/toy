@@ -88,7 +88,7 @@ def q2() -> None:
     rec_mod.Recorder._postprocess = patched
     try:
         out = Recorder(ZeroRateBackend()).record()
-        print(f"  输入 data=1600B (800 帧), sample_rate=0")
+        print("  输入 data=1600B (800 帧), sample_rate=0")
         print(f"  `or 1` 修法输出: data={len(out.data)}B duration_s={out.duration_s}")
         print(f"  数据被砍掉 {1600 - len(out.data)} 字节"
               f"（伪时长 = 800/1 = 800s > limit 15s → 触发截断）")

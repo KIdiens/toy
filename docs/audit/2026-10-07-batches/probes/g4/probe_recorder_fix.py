@@ -58,8 +58,10 @@ def run(label: str, rec: Recording) -> None:
 
 def main() -> None:
     for case, rec in [
-        ("A: duration_s=0, rate=0", Recording(data=DATA, sample_rate=0, channels=1, duration_s=0.0)),
-        ("B: duration_s=20, rate=0", Recording(data=DATA, sample_rate=0, channels=1, duration_s=20.0)),
+        ("A: duration_s=0, rate=0",
+         Recording(data=DATA, sample_rate=0, channels=1, duration_s=0.0)),
+        ("B: duration_s=20, rate=0",
+         Recording(data=DATA, sample_rate=0, channels=1, duration_s=20.0)),
     ]:
         print(f"\n{case}  (data={len(DATA)}B, limit=15s)")
         run("现状代码", rec)
