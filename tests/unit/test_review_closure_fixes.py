@@ -22,6 +22,7 @@ from host.adapters.queues import CommandRouter
 from host.adapters.runtime import build_context
 from host.config.settings import load_settings
 from host.core.bus import EventBus
+from host.core.clock import VirtualClock
 from host.core.engine import Engine
 from host.core.errors import ConflictError
 from host.core.events import CommandKind
@@ -30,7 +31,8 @@ from host.core.state_machine import SessionStateMachine, State, Trigger
 from tests.support import TOY_ROOT
 
 
-def _context(tmp_path: Path, name: str = "toy.sqlite3", *, root: Path | None = None):
+def _context(tmp_path: Path, name: str = "toy.sqlite3", *, root: Path | None = None,
+             clock: object | None = None):
     # boot_wait 必须**盖过固件的角色稳定期**：``sim/controller.py`` 要求角色连续稳定
     # ``STABLE_MS=200`` 才允许 ARM，而 ``MotionClient.play`` 只推进 boot_wait_s。
     # 原先这里是 0.05，在「表演键真的驱动硬件」之前无所谓（动作根本不播）；
@@ -38,7 +40,12 @@ def _context(tmp_path: Path, name: str = "toy.sqlite3", *, root: Path | None = N
     # InterlockError → SAFETY_TRIP → FAULT_LOCKED，把本例的断言带歪。
     # 0.5 既满足稳定期，又比真机默认的 2.0 短，让用例不必真等两秒。
     settings = load_settings({"DB_PATH": str(tmp_path / name), "MOTION_BOOT_WAIT_S": "0.5"})
-    return build_context(settings, simulate=True, root=root or TOY_ROOT)
+    # ``clock`` 供需要虚拟时间的用例注入 ``VirtualClock``（第 8 组）。
+    # **只在不起 worker 的用例里注入**：tick loop 的节拍是 ``stop_event.wait()``
+    # （真实等待，不经 clock），而 ``run_forever`` 的空转让位是
+    # ``self.clock.sleep(0.005)`` —— 换成虚拟时钟后它变成零等待空操作，
+    # 实测 worker 线程会 100% CPU 空转（1.0s 挂钟耗 1.53s CPU）。
+    return build_context(settings, simulate=True, root=root or TOY_ROOT, clock=clock)
 
 
 @contextlib.contextmanager
@@ -223,20 +230,50 @@ def test_volume_key_steps_the_level(tmp_path: Path) -> None:
 
 # --------------------------------------------------------------- 录音起点
 def test_new_recording_restarts_the_timeout_origin(tmp_path: Path) -> None:
-    """新增录的开始必须重置录音兜底计时器，否则新一轮会被立刻收尾。"""
+    """新增录的开始必须重置录音兜底计时器，否则新一轮会被立刻收尾。
+
+    第 8 组改写：原先用 ``_running()`` + ``time.sleep(0.4)`` 等 tick 线程跑一轮，
+    既依赖墙钟（固有的flake 源）又依赖 0.5s 的 tick 节拍。
+
+    改写依据（本用例真正要测的东西**不需要 worker，也不需要时间流逝**）：
+    被测逻辑是 :meth:`WorkersMixin._enforce_recording_timeout` 里的重置判断
+    ——「起点为 None **或** 会话键变了」就把起点重置为当前时刻。原先起 worker
+    只是为了「让这个方法被调用一次」，而直接调用同一个方法即可，
+    被测代码路径**完全相同**（下面反向验证证明判别力未丢）。
+
+    顺带说明原先的脆弱点（实测纠正，不是猜测）：实测在 ``press_button`` 之后的
+    0.4s 窗口里 ``_enforce_recording_timeout`` **确实跑了 1 次**（不是 0 次），
+    所以旧写法在本机能过。但它成立依赖于「worker 启动后的 0.2s + sleep 0.4s
+    恰好跨过一个 0.5s tick 节拍」这个时序巧合——节拍相位一旦偏移（例如机器
+    变慢、worker 启动变慢），第一拍就可能落在断言之后，测到的将是上一拍的值。
+    新写法不依赖任何相位，故消除的是**时序巧合依赖**而非已发生的 bug。
+    """
     context = _context(tmp_path, "origin.sqlite3")
-    context._record_limit_s = lambda: 5.0
-    context._recording_since_ms = 1  # 模拟上一轮残留的起点
-    with _running(context):
-        context.press_button(1)
-        time.sleep(0.4)
+    try:
+        context._record_limit_s = lambda: 5.0
+        context._recording_since_ms = 1  # 模拟上一轮残留的起点
+        assert context.state_machine.state is not State.RECORDING
+
+        context.press_button(1)                # -> RECORDING
+        assert context.state_machine.state is State.RECORDING
+
+        # 直接驱动被测逻辑（原先这一步靠 tick 线程 + 0.4s 真实等待）
+        context._enforce_recording_timeout()
 
         origin = context._recording_since_ms
-        assert origin is not None
+        assert origin is not None, "起点没有被重置回有效值"
+        assert origin != 1, "新一轮沿用了上一轮的残留起点（未重置）"
         assert context.clock.now_ms() - origin < 3000, (
-            f"新一轮沿用了上一轮的起点（origin={origin}，now={context.clock.now_ms()}）"
+            f"新一轮的起点不是当前时刻（origin={origin}，now={context.clock.now_ms()}）"
         )
         assert context.state_machine.state is State.RECORDING, "新一轮被残留计时器提前收尾了"
+
+        # 判别力（反向验证用）：再拍一次**不得**因为「起点已设」就跳过重置判断，
+        # 且因为还没到上限（5s），这一拍不得收尾。
+        context._enforce_recording_timeout()
+        assert context.state_machine.state is State.RECORDING
+    finally:
+        context.close()
 
 
 def test_new_recording_is_not_truncated_when_no_tick_saw_the_idle_gap(tmp_path: Path) -> None:
@@ -245,14 +282,37 @@ def test_new_recording_is_not_truncated_when_no_tick_saw_the_idle_gap(tmp_path: 
     这是「用 tick 是否观测到非 RECORDING 来清零计时器」的固有漏洞：tick 从未见到 IDLE，
     旧起点被沿用 → 新一轮被立刻判超时 → 录音被静默截断（UI 表现为「刚开口就说完了」）。
     会话键改为状态机 history 里「最后一次进入 RECORDING」的下标后，这个漏洞被堵住。
+
+    第 8 组改写：``time.sleep(0.25)`` -> ``VirtualClock.advance(250)``。
+    语义完全等价（让第一轮在时间上确实超过 0.15s 上限），但**零真实等待**。
+
+    为什么这里能用虚拟时钟、而上面那条不能（实测结论，见
+    ``data/g8/probe_clock_feasibility.py``）：本用例**不起 worker**，
+    只直接调用 ``_enforce_recording_timeout``，而该方法只读 ``self.clock.now_ms()``——
+    换成 ``VirtualClock`` 后时间由 ``advance()`` 精确控制。上面那条若也注入
+    虚拟时钟却仍起 worker，``run_forever`` 的 ``self.clock.sleep(0.005)``
+    会退化成零等待空操作，**实测 worker 线程 100% CPU 空转**（1.0s 挂钟烧
+    1.53s CPU）；而 tick 节拍用的是 ``stop_event.wait()``（真实等待，不经 clock），
+    虚拟时间不会被它自己推进。故上面那条改为「不起 worker + 直接调用」。
+
+    这里 ``clock`` 必须在**构建时**注入（``build_context(clock=...)``）：
+    ``context.clock`` 虽是普通字段、事后可改，但 worker 与各组件都是在构建时
+    拿到该实例的，事后改字段不能追溯更新它们。
     """
-    context = _context(tmp_path, "origin2.sqlite3")
+    clock = VirtualClock()
+    context = _context(tmp_path, "origin2.sqlite3", clock=clock)
     context._record_limit_s = lambda: 0.15
     try:
         context.press_button(1)                    # 第一轮 -> RECORDING
         context._enforce_recording_timeout()       # 第一拍 tick：记下起点与会话键
         first_mark = context._rec_entry_mark
-        time.sleep(0.25)                           # 让第一轮在时间上确实超过上限
+        first_origin = context._recording_since_ms
+        assert first_mark >= 0, "第一拍没有记下会话键"
+        assert first_origin is not None
+
+        # 让第一轮在时间上确实超过上限（虚拟时间，零真实等待）
+        clock.advance(250)
+        assert clock.now_ms() - first_origin >= 150, "虚拟时间没推进，超上限前提不成立"
 
         context.press_button(2)                    # 取消 -> IDLE
         context.press_button(1)                    # 立刻重按 -> RECORDING（tick 没观测到 IDLE）
@@ -262,6 +322,14 @@ def test_new_recording_is_not_truncated_when_no_tick_saw_the_idle_gap(tmp_path: 
         assert context._rec_entry_mark > first_mark, "会话键没有随新一轮录音前进"
         assert context.state_machine.state is State.RECORDING, (
             "新一轮被上一轮的计时起点立刻收尾（录音被静默截断）"
+        )
+
+        # 判别力（反向验证用）：此刻已越过 0.15s 上限，但起点刚被重置，
+        # 所以**这一拍不得**收尾；只有再过 150ms 才该收尾。
+        clock.advance(200)
+        context._enforce_recording_timeout()
+        assert context.state_machine.state is State.RECORDING, (
+            "起点重置后仍被立刻收尾——说明重置的是起点值而不是超时判断本身"
         )
     finally:
         context.close()
