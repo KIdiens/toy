@@ -29,6 +29,42 @@ ROLE_JSON = "role.json"
 # 被当成角色读入会导致同一 role_id 双来源 → ConfigError；版本号相同时更会静默错读。
 RESIDUE_SUFFIXES = (".bak", ".incoming")
 
+# Win32 **裸**保留设备名。Win32 的设备名解析规则是「**点号之前**的基础名」匹配，
+# 与扩展名、目录层级、大小写都无关：``NUL`` / ``nul`` / ``sub/NUL`` 都会打开同一个
+# NUL 设备。实测（本机，NTFS）：往这些名字写数据**静默丢弃** —— 不报错、
+# ``import_rolepack`` 还报告 files=2，但目录里根本没有那个文件（详见
+# data/g7/probe_defect2_matrix.py）。
+#
+# 实测边界（重要，勿扩大范围）：**带扩展名不受影响**。``aux.json`` / ``COM1.json`` /
+# ``nul.json`` / ``CON.txt`` 在本机实测全部正常落盘为普通文件；``CON`` / ``AUX`` /
+# ``PRN`` / ``COM1`` / ``LPT1`` / ``CLOCK$`` 这些裸名同样**正常落盘**为普通文件。
+# 真正静默丢数据的只有 ``NUL`` / ``nul``（含 ``sub/NUL``）——它们是「无厚度」的
+# 输出设备，写进去的数据不进入任何文件系统状态。
+#
+# 既然只有 NUL 真正丢数据，为什么仍拦整张表：Windows 设备名是**操作系统契约**而非
+# 本机巧合，同一角色包换台机器/换个文件系统解析器就可能真的打开设备句柄（打印到
+# 打印机、写进COM 口都是真实后果）。成员名是「包作者可控的输入」，而角色包只需要
+# role.json + .json 动作文件，合法输入空间极窄，拦这张表的误伤面接近零（见 PR 报告
+# 「误伤面分析」）。按 ``_RESERVED_DEVICE_NAMES`` 前缀匹配即可，不必维护「哪些名字
+# 恰好无害」的白名单——那种白名单在别的 Windows 版本上就失效了。
+_RESERVED_DEVICE_NAMES = (
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+    "CLOCK$",
+)
+
+
+def _is_reserved_device(segment: str) -> bool:
+    """该路径段是否是 Win32 保留设备名（按「点号前的基础名」判）。
+
+    ``segment`` 必须是**已归一化**的段（调用方经 ``_norm_segments`` 处理），
+    因此这里的输入已是 Win32 落盘时真正使用的名字。
+    """
+    # 点号前的基础名：``NUL`` 命中、``nul.json`` 也命中。去掉尾随点后 ``NUL.`` 同样命中。
+    stem = segment.split(".", 1)[0].rstrip(" .").upper()
+    return stem in _RESERVED_DEVICE_NAMES
+
 
 class RolePackError(ConfigError):
     """角色包校验失败（结构 / 安全 / 体量）。失败必须保留旧版本。"""
@@ -135,6 +171,13 @@ def _check_name(name: str) -> None:
     stripped = "/".join(_win32_strip(p) for p in parts)
     if stripped.lower().endswith(FORBIDDEN_SUFFIXES):
         raise RolePackError(f"拒绝可执行脚本: {name}")
+    # 保留设备名必须复用**同一份**归一化（``_win32_strip`` 已在上面用过）：Win32 落盘时
+    # 用的是剥离后的名字，所以 `NUL ` / `NUL.` / `sub/NUL` 打开的都是 NUL 设备。
+    # 若这里改用未剥离的原始段判断，`NUL␠` 这类别名就能绕过（与尾随点的后缀绕过同源)。
+    # 误伤面：合法成员名是 role.json 与 .json 动作文件，其基础名无一在设备名表内。
+    for segment in stripped.split("/"):
+        if _is_reserved_device(segment):
+            raise RolePackError(f"拒绝 Win32 保留设备名: {name}")
 
 
 def validate_zip(zip_path: str | Path) -> list[zipfile.ZipInfo]:

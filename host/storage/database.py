@@ -16,7 +16,17 @@ from pathlib import Path
 from host.storage.errors import MigrationError, translate
 
 MIGRATIONS_DIR: Path = Path(__file__).resolve().parent / "migrations"
-BUSY_TIMEOUT_MS = 5000
+# 写锁被占时的**最长等待**，不是「愿意等多久」。定500ms 的依据（本机实测，
+# 见 data/g7/probe_d3_classify.py）：
+#   - 无竞争写事务（BEGIN IMMEDIATE + INSERT + COMMIT）p95 ≈ 2.9ms、max ≈ 2.9ms
+#     → 500ms 是它的 ~170 倍，正常并发（单actor + 少量请求重叠）**绝不会**误伤；
+#   - 原5000ms 在 Pi 4B 上会让**每个**撞锁的写请求独占一个 DB 连接 5 秒。
+#     SQLite 连接不是无价的（每连接一份 page cache + WAL 读标记），主机是
+#     单写者架构，这类等待会把并发写串行化成「排队 5 秒」，拖垮整个服务。
+# 快失败（503 + Retry-After）把「等多久」的决定权交还调用方，这正是
+# 临时性资源竞争的正确语义。**不可降到 0**：那会让并发写立刻失败，
+# 而 2~3ms 的正常重叠本应被吸收掉。
+BUSY_TIMEOUT_MS = 500
 _MIGRATION_NAME = re.compile(r"^(\d+)_")
 
 

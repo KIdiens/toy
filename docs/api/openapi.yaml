@@ -250,6 +250,11 @@ paths:
                       data:
                         type: array
                         items: { $ref: '#/components/schemas/Memory' }
+        # 读端点也可能写：默认档案不存在时服务会**自动建档**（profiles_repo.create）。
+        # 实测（data/g7/probe_d3_read.py）：建档前锁中读 → 503；已建档后同请求 → 200。
+        # 所以「读」不保证不碰写锁，契约必须如实声明。
+        '503':
+          $ref: '#/components/responses/StorageBusy'
 
   /memories/{id}:
     delete:
@@ -267,6 +272,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
+        '503':
+          $ref: '#/components/responses/StorageBusy'
 
   /reminders:
     get:
@@ -316,6 +323,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
+        '503':
+          $ref: '#/components/responses/StorageBusy'
 
   /reminders/{id}:
     delete:
@@ -333,6 +342,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
+        '503':
+          $ref: '#/components/responses/StorageBusy'
 
   /settings:
     get:
@@ -366,6 +377,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
+        '503':
+          $ref: '#/components/responses/StorageBusy'
 
   /features:
     get:
@@ -399,6 +412,30 @@ paths:
           description: 未授权
 
 components:
+  responses:
+    # 统一错误信封（通用错误响应，供各端点按需 $ref）。
+    ErrorEnvelope:
+      description: 统一错误信封
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }
+
+    # 写锁冲突是**临时性资源竞争**（SQLITE_BUSY / SQLITE_LOCKED），不是服务器内部错误：
+    # 对方事务提交后重试即必然成功，故用 503 而非 500。code=50301 固定，
+    # Retry-After 给出建议重试间隔（秒）。确定性存储故障（磁盘坏、表不存在）仍是 500/50001。
+    StorageBusy:
+      description: >-
+        数据库写锁被占用（临时性资源竞争）。响应头含 `Retry-After`（秒），
+        调用方应退避后重试；重试必然成功。信封 code=50301。
+      headers:
+        Retry-After:
+          description: 建议重试间隔（秒）
+          schema: { type: integer, minimum: 1 }
+          example: 1
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }
+
   schemas:
     Envelope:
       type: object
@@ -612,10 +649,3 @@ components:
         language: { type: string, enum: [Auto, zh, en] }
         memory_enabled: { type: boolean }
         content_rating_max: { type: string }
-
-  responses:
-    ErrorEnvelope:
-      description: 统一错误信封
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/Envelope' }

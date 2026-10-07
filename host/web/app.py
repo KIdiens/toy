@@ -24,6 +24,7 @@ from host.core.errors import (
     ConflictError,
     HostError,
     RecordNotFound,
+    StorageBusy,
     StorageError,
 )
 from host.web import schemas
@@ -43,6 +44,10 @@ from host.web.routers import (
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 API_PREFIX = "/api/v1"
 logger = logging.getLogger("host.web.app")
+# 锁冲突是**临时性资源竞争**：对方事务提交后重试即成功，故回 503（可重试）
+# 而不是 500（服务器内部错误，重试无意义）。附 Retry-After 让调用方知道等多久。
+STORAGE_BUSY_CODE = 50301
+RETRY_AFTER_SECONDS = 1
 PAGE_ROUTES: dict[str, str] = {
     "/": "index.html",
     "/editor": "editor.html",
@@ -85,8 +90,21 @@ def _register_error_handlers(app: FastAPI) -> None:
     async def _on_invalid(_request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content=schemas.error(42201, _describe(exc)))
 
+    @app.exception_handler(StorageBusy)
+    async def _on_storage_busy(_request, exc: StorageBusy) -> JSONResponse:
+        """写锁冲突 → 503 + ``Retry-After``。
+
+        必须**注册在 :class:`StorageBusy` 上**而不是复用 StorageError 的 500：
+        FastAPI/Starlette 按异常类的 MRO 找最精确的处理器，StorageBusy 是
+        StorageError 的子类，两条都注册时子类优先，语义边界才成立。
+        """
+        return JSONResponse(status_code=503,
+                            content=schemas.error(STORAGE_BUSY_CODE, str(exc)),
+                            headers={"Retry-After": str(RETRY_AFTER_SECONDS)})
+
     @app.exception_handler(StorageError)
     async def _on_storage(_request, exc: StorageError) -> JSONResponse:
+        # 确定性存储故障（磁盘坏、表不存在、约束失败）重试无意义 → 500。
         return JSONResponse(status_code=500, content=schemas.error(50001, str(exc)))
 
     @app.exception_handler(StarletteHTTPException)

@@ -6,11 +6,12 @@
 """
 from __future__ import annotations
 
-from host.storage.errors import (  # noqa: F401  再导出：唯一定义处在 host.storage.errors
+from host.storage.errors import (  # noqa: F401  再导出：唯一定义处在host.storage.errors
     ConstraintViolation,
     ForeignKeyViolation,
     MigrationError,
     RecordNotFound,
+    StorageBusy,
     StorageError,
     UniqueViolation,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "ConflictError",
     "ClarifyError",
     "StorageError",
+    "StorageBusy",
     "MigrationError",
     "RecordNotFound",
     "UniqueViolation",
