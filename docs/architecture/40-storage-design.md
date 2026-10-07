@@ -83,7 +83,7 @@ class Reminder:
 ```python
 # database.py
 MIGRATIONS_DIR: Final[Path] = Path(__file__).resolve().parent / "migrations"
-BUSY_TIMEOUT_MS: Final[int] = 5000
+BUSY_TIMEOUT_MS: Final[int] = 500
 
 class Database:
     def __init__(self, path: str | os.PathLike[str]) -> None: ...
@@ -100,9 +100,28 @@ class Database:
 - `connect()` 维护 `threading.local()`，**首次**为当前线程建连接后立即执行（顺序不可调换）：
   1. `PRAGMA foreign_keys = ON`
   2. `PRAGMA journal_mode = WAL`
-  3. `PRAGMA busy_timeout = 5000`
+  3. `PRAGMA busy_timeout = 500`
   4. `con.row_factory = sqlite3.Row`
 - 连接**不跨线程共享**（`sqlite3` 默认 `check_same_thread=True`）。核心（单线程 actor）与 uvicorn 的线程池各用各的连接。
+
+### 3.1.1 撞锁为什么**快速失败**（`BUSY_TIMEOUT_MS = 500`）
+
+`busy_timeout` 是「撞上写锁后**等多久**再放弃」，取值决定撞锁请求的最坏耗时：
+每个撞锁的写请求会**独占一个 DB 连接**整整 `busy_timeout` 毫秒。
+
+- **500 是够用的**：实测无竞争写事务 p95 ≈ 2.9ms，500ms 是其约 170 倍，正常并发
+  重叠绝无伤。不取 0：并发写仍需吸收那 2~3ms 的重叠。
+- **5000 会拖垮服务**：每个撞锁写请求独占连接 5 秒（实测 5.57s），Pi 4B 上足以
+  让并发写请求堆积、连接池耗尽。而这段时间它**什么也没做** —— 对方事务提交后
+  重试必然成功，长等没有收益，只有代价。
+- **快速失败需要契约配套**（否则只是把 500 换个数字）：撞锁由 `StorageBusy` 表达，
+  web 层映射 **503 + `Retry-After` + `code=50301`**（见 `docs/api/openapi.yaml` 的
+  `components.responses.StorageBusy`）。确定性存储故障（磁盘坏、表不存在、约束
+  失败）仍是 500 / `50001`。无竞争写事务耗时实测见
+  `tests/integration/test_error_envelope.py`。
+
+> 该数值与实现的一致性由 `tests/contract/test_storage_design_doc_consistency.py`
+> 钉住（读 `database.py` 的真实常量与本文档比对），再漂移会被测试拦住。
 
 ### 3.2 为什么「每连接开外键、且在事务之前」是硬纪律
 
