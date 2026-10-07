@@ -67,7 +67,32 @@ def _is_reserved_device(segment: str) -> bool:
 
 
 class RolePackError(ConfigError):
-    """角色包校验失败（结构 / 安全 / 体量）。失败必须保留旧版本。"""
+    """角色包校验失败（结构 / 安全 / 体量 / 文件系统）。失败必须保留旧版本。"""
+
+
+def _fs_error(member: str, exc: OSError) -> RolePackError:
+    """把落盘阶段的 ``OSError`` 收口成带**成员名上下文**的 :class:`RolePackError`。
+
+    为什么要收口：本模块对外承诺的失败类型是 ``RolePackError``，web 层
+    ``routers/content.py`` 只``except rolepack.RolePackError`` -> 回 400/ 40001。
+    裸 ``OSError`` 会一路漏到 ``app.py`` 的兜底 handler，变成 500 / 50000，
+    调用方无法区分「包坏了」（可提示用户重打包）与「服务端炸了」。
+
+    **只收``OSError``，不收 ``Exception``** —— 依据是继承关系而非偏好：
+    ``RolePackError`` 继承 ``ConfigError -> HostError -> RuntimeError``，
+    **不是** ``OSError`` 的子类，所以 ``except OSError`` 在结构上不可能抓到本模块
+    自己的语义化报错（路径穿越、绝对路径、冒号、脚本后缀、保留设备名、成员名冲突）。
+
+    实测边界（不要夸大这条保证）：把 :func:`extract_safely` 里的 ``except OSError``
+    放宽成 ``except Exception``，现有用例**不会**转红 —— 因为那个 ``try`` 块里
+    只有文件系统调用，语义化报错都在块外（``validate_zip`` 内）或块的前一行
+    （越界检查）抛出。所以「放宽捕获」 Today 是**无害**的，但它是**依赖代码布局的
+    无害**：日后若有人把新的校验挪进这个 ``try``，``except Exception`` 就会把它
+    二次包装、改掉措辞并丢掉 ``__cause__``。``except OSError`` 让这种依赖消失。
+    不因此收窄成 ``except Exception`` 的诱惑，理由仅是上述继承关系。
+    """
+    kind = type(exc).__name__
+    return RolePackError(f"写入成员失败（{kind}: {exc}）: {member}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +211,11 @@ def validate_zip(zip_path: str | Path) -> list[zipfile.ZipInfo]:
         archive = zipfile.ZipFile(zip_path)
     except zipfile.BadZipFile as exc:
         raise RolePackError(f"损坏的 zip: {exc}") from exc
+    except OSError as exc:
+        # 文件不存在 / 权限不足 / 路径过长 / 设备错误：``zipfile`` 把这些统一抛成
+        # ``OSError`` 子类（``FileNotFoundError`` / ``PermissionError`` / ...），
+        # 不接住就会漏成web 层的纯文本 500。语义与上面「损坏的 zip」不同，故分开写。
+        raise RolePackError(f"无法读取角色包文件: {zip_path}（{exc}）") from exc
     with archive:
         infos = archive.infolist()
         files = [i for i in infos if not i.is_dir()]
@@ -244,7 +274,13 @@ def extract_safely(zip_path: str | Path, dest: str | Path) -> ExtractReport:
     """把通过校验的 zip 解到 ``dest``（``dest`` 由调用方保证是临时目录）。"""
     destination = Path(dest).resolve()
     infos = validate_zip(zip_path)
-    destination.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # 父路径不是目录 / 权限不足 / 路径过长。见 :func:`_fs_error` 的收口理由。
+        raise RolePackError(
+            f"无法创建解包目录 {destination}（{exc}）"
+        ) from exc
     count = 0
     total = 0
     with zipfile.ZipFile(zip_path) as archive:
@@ -252,12 +288,20 @@ def extract_safely(zip_path: str | Path, dest: str | Path) -> ExtractReport:
             target = (destination / info.filename).resolve()
             if destination not in target.parents and target != destination:
                 raise RolePackError(f"越界写入被拒: {info.filename}")
-            if info.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(info) as src, target.open("wb") as out:
-                shutil.copyfileobj(src, out, 1024 * 1024)
+            try:
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as src, target.open("wb") as out:
+                    shutil.copyfileobj(src, out, 1024 * 1024)
+            except OSError as exc:
+                # 本模块对外承诺的失败类型是 RolePackError（web 层据此回 400）。
+                # 落盘阶段的文件系统异常若裸抛，会漏成500，且调用方无法区分
+                # 「包有问题」与「服务端炸了」。实测两类真实触发点：
+                # 1. 成员名命中 Win32 保留设备（``nul\t`` / ``aux\t``）-> PermissionError；
+                # 2. zip 字节损坏到 ``seek`` 失败 -> OSError(Errno 22)。
+                raise _fs_error(info.filename, exc) from exc
             count += 1
             total += info.file_size
     return ExtractReport(files=count, total_bytes=total)
@@ -276,7 +320,15 @@ def import_rolepack(zip_path: str | Path, target_dir: str | Path) -> ExtractRepo
             raise RolePackError(f"角色包缺少 {ROLE_JSON}")
         shutil.rmtree(backup, ignore_errors=True)
         if target.exists():
-            target.rename(backup)
+            try:
+                target.rename(backup)
+            except OSError as exc:
+                # 旧版本被占用（Windows 上目录内有开着的句柄）会让这里失败。
+                # 不接住就是裸 PermissionError -> 漏 500，且此时**旧版本仍在原位**
+                # （rename 是原子的，没成功就等于没动），所以只报失败、不做还原。
+                raise RolePackError(
+                    f"角色包换入失败（旧版本目录被占用，无法备份: {exc}）: {target}"
+                ) from exc
         try:
             incoming.rename(target)
         except OSError as exc:
