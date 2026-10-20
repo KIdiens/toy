@@ -22,7 +22,9 @@ OpenAI function-calling 沿用）只认 ``"string"`` / ``"integer"`` / ``"number
 """
 from __future__ import annotations
 
+import ast
 import json
+from dataclasses import dataclass
 
 import pytest
 from host.ai.providers import ToolSpec
@@ -34,6 +36,8 @@ from host.ai.tools import (
     build_spec,
 )
 from host.core.errors import ToolValidationError
+
+from tests.support import TOY_ROOT
 
 # JSON Schema draft 2020-12 的合法 type 关键字全集（本项目只会用到前四个）。
 VALID_JSON_TYPES = {
@@ -187,50 +191,251 @@ def test_bool_is_not_accepted_as_int() -> None:
 # =====================================================================
 # 4. 真实注册表巡检：线上工具的 schema 必须全部合法
 # =====================================================================
-def _all_registered_specs() -> list[tuple[str, ParamSpec]]:
-    """从 ``host/tools/*`` 收集所有实际注册用的 ``ParamSpec``。
+@dataclass(frozen=True)
+class _DeclaredSpec:
+    """一处 ``ParamSpec(...)`` 的**声明原文**（关键字参数全保留）。
 
-    刻意用**源码扫描**而不是 import 真实 registry：那需要 LLM provider 凭据，
-    而本组要验的是「声明的规格」本身能否产出合法 schema。
+    ``declared`` 是 ast 静态求值出来的原始关键字（``minimum`` / ``pattern`` /
+    ``choices`` / ...），``spec`` 是用它们构造出来的真实 ``ParamSpec``。
     """
-    import pathlib
-    import re
 
-    pattern = re.compile(r"ParamSpec\(([^)]*)\)")
-    found: list[tuple[str, ParamSpec]] = []
-    for path in sorted(pathlib.Path("host/tools").glob("*.py")):
-        for match in pattern.finditer(path.read_text(encoding="utf-8")):
-            args = [a.strip() for a in match.group(1).split(",") if a.strip()]
-            name = args[0].strip("\"'")
-            kwargs: dict = {}
-            for arg in args[1:]:
-                if "=" not in arg:
-                    continue
-                key, value = arg.split("=", 1)
-                kwargs[key.strip()] = value.strip()
-            type_name = kwargs.get("type", "str")
-            py_type = {"str": str, "int": int, "float": float, "bool": bool}[type_name]
-            found.append((f"{path.name}:{name}",
-                          ParamSpec(name, py_type,
-                                    required=kwargs.get("required", "True") != "False")))
+    label: str
+    spec: ParamSpec
+    declared: dict[str, object]
+
+
+def _module_constants(tree: ast.Module) -> dict[str, object]:
+    """模块级字面量常量（``CITY_PATTERN = r"..."`` 这类），供 ``pattern=常量名`` 求值。"""
+    constants: dict[str, object] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        try:
+            constants[target.id] = ast.literal_eval(node.value)
+        except ValueError:
+            continue
+    return constants
+
+
+_TYPE_BY_NAME = {"str": str, "int": int, "float": float, "bool": bool}
+
+
+def _literal(node: ast.AST, constants: dict[str, object], *, where: str) -> object:
+    """把实参节点求值成 Python 值；名字先查模块常量，其次查内置参数类型。"""
+    if isinstance(node, ast.Name):
+        if node.id in constants:
+            return constants[node.id]
+        if node.id in _TYPE_BY_NAME:
+            return _TYPE_BY_NAME[node.id]   # 位置实参写的是内置类型 str/int/...
+        raise AssertionError(f"{where}: 无法静态求值的名字 {node.id}")
+    try:
+        return ast.literal_eval(node)
+    except ValueError as exc:  # pragma: no cover - 只有写成表达式才会到这里
+        raise AssertionError(f"{where}: 参数不是字面量（{ast.unparse(node)}）") from exc
+
+
+def _all_registered_specs() -> list[_DeclaredSpec]:
+    """从 ``host/tools/*`` 收集所有实际注册用的 ``ParamSpec``（含全部约束值）。
+
+    刻意用**源码静态扫描**而不是 import 真实 registry：那些 ``register()`` 需要
+    client / db / 凭据，未必能裸 import；而本组要验的是「声明的规格」本身能否
+    产出合法且不丢约束的 schema。
+
+    **为什么必须用 ast**（改前是正则 ``ParamSpec\\(([^)]*)\\)``）：旧实现把捕获到的
+    实参按逗号切开后**只重建了 name / type / required**，``minimum`` / ``maximum`` /
+    ``pattern`` / ``choices`` 全部丢弃，于是「约束值」根本没进入被测对象 ——
+    审计复现：把 ``reminders.py`` 的 ``ParamSpec("id", int, minimum=1)`` 改成
+    ``minimum=-100``，改前的本文件 23 条全绿。ast 能拿到关键字实参的名字与字面量值，
+    一个都不会漏；顺带也不会被值里出现的右括号（例如 ``pattern=r"[)]{1,60}"``）截断。
+    """
+    found: list[_DeclaredSpec] = []
+    for path in sorted((TOY_ROOT / "host" / "tools").glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        constants = _module_constants(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "ParamSpec"):
+                continue
+            where = f"{path.name}:{node.lineno}"
+            positional = [_literal(arg, constants, where=where) for arg in node.args]
+            kwargs = {kw.arg: _literal(kw.value, constants, where=where)
+                      for kw in node.keywords if kw.arg is not None}
+            if positional:
+                kwargs["name"] = positional[0]
+            if len(positional) > 1:
+                kwargs["type"] = positional[1]
+            type_name = kwargs.pop("type", "str")
+            if isinstance(type_name, str):
+                if type_name not in _TYPE_BY_NAME:
+                    raise AssertionError(f"{where}: 未知参数类型 {type_name!r}")
+                py_type = _TYPE_BY_NAME[type_name]
+            else:
+                py_type = type_name  # type: ignore[assignment]
+            name = str(kwargs.pop("name"))
+            spec = ParamSpec(name, py_type, **kwargs)
+            declared = {"type": py_type, **kwargs}
+            found.append(_DeclaredSpec(f"{path.name}:{name}", spec, declared))
     return found
+
+
+_DECLARED_SPECS = _all_registered_specs()
+
+
+def _json_type_of(declared: dict[str, object]) -> str:
+    return JSON_TYPE_NAMES[declared["type"]]  # type: ignore[index]
+
+
+def _expected_schema(declared: dict[str, object]) -> dict[str, object]:
+    """**独立于 ``build_spec``** 地按 JSON Schema 语义写出「应该长什么样」。
+
+    刻意不复用产品代码的映射表逻辑：期望值必须来自声明原文，否则就成了
+    「拿实现验实现」。``build_spec`` 丢弃任一约束键，这里立刻对不上。
+    """
+    schema: dict[str, object] = {"type": _json_type_of(declared)}
+    choices = declared.get("choices")
+    if choices:
+        schema["enum"] = list(choices)  # type: ignore[arg-type]
+    if declared.get("minimum") is not None:
+        schema["minimum"] = declared["minimum"]
+    if declared.get("maximum") is not None:
+        schema["maximum"] = declared["maximum"]
+    return schema
 
 
 def test_every_registered_param_spec_produces_a_valid_schema() -> None:
     """线上全部工具参数的 schema 必须合法 —— 这是「组2 已修好」的直接证据。"""
-    specs = _all_registered_specs()
-    assert len(specs) >= 8, f"只扫到 {len(specs)} 处 ParamSpec，扫描规则可能失效了"
-    for label, spec in specs:
-        schema = build_spec("t", "d", (spec,)).parameters["properties"][spec.name]
-        assert schema["type"] in VALID_JSON_TYPES, f"{label} → {schema}"
+    assert len(_DECLARED_SPECS) >= 8, (
+        f"只扫到 {len(_DECLARED_SPECS)} 处 ParamSpec，扫描规则可能失效了"
+    )
+    for entry in _DECLARED_SPECS:
+        schema = build_spec("t", "d", (entry.spec,)).parameters["properties"][entry.spec.name]
+        assert schema["type"] in VALID_JSON_TYPES, f"{entry.label} → {schema}"
+
+
+@pytest.mark.parametrize("entry", _DECLARED_SPECS, ids=[e.label for e in _DECLARED_SPECS])
+def test_declared_constraints_reach_the_schema_verbatim(entry: _DeclaredSpec) -> None:
+    """声明里的**每一个**约束键都必须原样出现在发给模型的 schema 里。
+
+    改前的断言只比 ``schema["type"]``，``minimum`` / ``enum`` 这些「模型真正会读的
+    约束」完全没人看：``build_spec`` 少写一行 ``properties[p.name]["minimum"] = ...``
+    也不会有任何用例转红。这里逐键比对（值也精确相等，不是「存在即可」）。
+    """
+    schema = build_spec("t", "d", (entry.spec,)).parameters["properties"][entry.spec.name]
+    assert schema == _expected_schema(entry.declared), (
+        f"{entry.label} 的 schema 与声明不符：\n"
+        f"  声明 {entry.declared}\n  期望 {_expected_schema(entry.declared)}\n"
+        f"  实际 {schema}"
+    )
+
+
+def test_numeric_lower_bounds_stay_meaningful() -> None:
+    """数值下限必须落在「有意义」的区间里 —— 这是**绝对值**锚点，不是字面值锚点。
+
+    为什么需要它：``test_declared_constraints_reach_the_schema_verbatim`` 的期望值
+    来自声明原文，``minimum=1`` 改成 ``minimum=-100`` 时两边一起变，比对仍然相等 ——
+    它能发现「约束被 build_spec 丢掉」，但发现不了「约束本身被改坏」。
+    这里用领域事实（编号类参数的编号从 1 开始，0/负值没有意义）兜住后者：
+    实测 ``reminders.py`` 的 ``minimum=1`` → ``minimum=-100`` 本条转红。
+    锚的是区间（1..1000）而不是 1，合理调参不必改测试。
+    """
+    bounded = [entry for entry in _DECLARED_SPECS
+               if entry.declared.get("minimum") is not None]
+    assert bounded, "扫描没找到任何带 minimum 的参数 —— 扫描规则可能失效了"
+    for entry in bounded:
+        minimum = entry.spec.minimum
+        assert minimum is not None and 1 <= minimum <= 1000, (
+            f"{entry.label} 的下限是 {minimum}：编号/数量类参数从 1 起编号，"
+            "0 或负值会把非法实参放行到工具层"
+        )
+
+
+#: 路径/ID 类参数的字符集是**安全边界**（这些值会拼进文件路径与查询），
+#: 放宽哪怕一个字符（例如把 ``.`` 或 ``/`` 放进白名单）就是路径穿越的口子，
+#: 所以这里逐字符钉死 —— 这是本文件唯一按字面值钉的地方，理由如上。
+EXPECTED_PATTERNS: dict[str, str] = {
+    "content.py:item_id": r"[A-Za-z0-9_:\-]{1,60}",
+    "content.py:action_id": r"[A-Za-z0-9_\-]{1,40}",
+    "reminders.py:text": r".{1,200}",
+    "reminders.py:due_at_utc": r"\d{4}-\d{2}-\d{2}T.+",
+    "reminders.py:idempotency_key": r".{1,64}",
+    "reminders.py:timezone": r"[A-Za-z]+/[A-Za-z_]+",
+    "weather.py:city": r"[\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z\s]{0,19}",
+}
+
+#: 每个带 pattern 的参数：一个必须**通过**的样本 + 几个必须**被拒**的样本。
+#: 只钉 pattern 字面值还不够 —— 若 ``validate_args`` 哪天不再执行 pattern 检查，
+#: 字符串再对也拦不住任何东西，所以同时验「拒绝/放行」的实际行为。
+PATTERN_SAMPLES: dict[str, tuple[str, list[str]]] = {
+    "content.py:item_id": ("story_01", ["../etc/passwd", "a/b", "a b", "x" * 61]),
+    "content.py:action_id": ("wave", ["../x", "a/b", "a b", "x" * 41]),
+    "reminders.py:text": ("喝水", [""]),
+    "reminders.py:due_at_utc": ("2030-01-01T00:00:00Z", ["2030-01-01", "明天"]),
+    "reminders.py:idempotency_key": ("k-1", [""]),
+    "reminders.py:timezone": ("Asia/Shanghai", ["Asia Shanghai", "Asia/Shanghai/x"]),
+    "weather.py:city": ("北京", ["", "A" * 21]),
+}
+
+
+def test_declared_patterns_match_the_pinned_contract() -> None:
+    """每一处 ``pattern=`` 都必须等于钉死的字面值（改一个字符即转红）。
+
+    为什么只能钉字面值、不能像 ``minimum`` 那样走 schema 比对：``build_spec``
+    **不输出** ``pattern``（它只写 type / enum / minimum / maximum）—— 所以
+    「pattern 有没有到达模型」这件事在本轮无法用 schema 断言证明，只能保证
+    「声明里的 pattern 没被动过」。这是本组的一个已知空洞，详见交付报告。
+    """
+    actual = {entry.label: entry.declared["pattern"]
+              for entry in _DECLARED_SPECS if "pattern" in entry.declared}
+    assert actual.keys() == EXPECTED_PATTERNS.keys(), (
+        f"带 pattern 的参数集合变了：多出 {sorted(actual.keys() - EXPECTED_PATTERNS.keys())}，"
+        f"少了 {sorted(EXPECTED_PATTERNS.keys() - actual.keys())}（新增的要同步登记样本）"
+    )
+    for label, expected in EXPECTED_PATTERNS.items():
+        assert actual[label] == expected, (
+            f"{label} 的 pattern 变了：\n  期望 {expected!r}\n  实际 {actual[label]!r}\n"
+            "路径/ID 类参数的字符集是安全边界，改动必须连带更新本表与样本"
+        )
+
+
+@pytest.mark.parametrize("entry", _DECLARED_SPECS, ids=[e.label for e in _DECLARED_SPECS])
+def test_declared_patterns_are_actually_enforced_by_the_validator(
+        entry: _DeclaredSpec) -> None:
+    """``validate_args`` 必须真的按声明的 pattern 放行/拒绝（行为层，不只看字符串）。"""
+    samples = PATTERN_SAMPLES.get(entry.label)
+    if "pattern" not in entry.declared:
+        assert samples is None, f"{entry.label} 没有 pattern 却登记了样本"
+        return
+    assert samples is not None, f"{entry.label} 带 pattern 但没登记拒绝样本"
+    good, bad_values = samples
+
+    registry = ToolRegistry()
+    registry.register("probe", "探针", (entry.spec,), lambda args: {"ok": True})
+    assert registry.validate_args("probe", {entry.spec.name: good}) == {
+        entry.spec.name: good
+    }, f"{entry.label} 把合法样本 {good!r} 拒了"
+    for bad in bad_values:
+        with pytest.raises(ToolValidationError):
+            registry.validate_args("probe", {entry.spec.name: bad})
 
 
 def test_spec_scanner_actually_found_the_known_specs() -> None:
-    """守住「扫描规则本身失效」这一退化：空集或漏扫会让上一条变成恒绿。"""
-    labels = {label for label, _ in _all_registered_specs()}
+    """守住「扫描规则本身失效」这一退化：空集或漏扫会让上面的断言变成恒绿。"""
+    labels = {entry.label for entry in _DECLARED_SPECS}
     assert any("weather" in label for label in labels), labels
     assert any("reminders" in label for label in labels), labels
     assert any("content" in label for label in labels), labels
+    # 关键：约束值本身也必须被扫到（改前的正则版本恰恰在这里是空集）
+    assert sum(1 for e in _DECLARED_SPECS if e.declared.get("pattern")) == len(
+        EXPECTED_PATTERNS
+    ), f"扫到的 pattern 数量与登记表不符：{sorted(labels)}"
+    assert sum(1 for e in _DECLARED_SPECS if e.declared.get("minimum") is not None) >= 1, (
+        "一个 minimum 都没扫到 —— 约束值又被丢掉了"
+    )
 
 
 def test_toolspec_is_the_type_the_provider_sends() -> None:
