@@ -255,9 +255,9 @@ def test_every_transition_produces_commands_with_the_state_machine_generation(
         source: State, trigger: Trigger, destination: State) -> None:
     """不变量：**每条**合法迁移都必须产出命令，且代数只能是迁移前/后的值。
 
-    覆盖全部 23 条迁移（含 4 个自环：``VOLUME_PRESS`` 不改状态、只发 NOTIFY，
-    最容易在重构时被整条漏掉）。自环分支返回空列表就立刻转红 —— 这正是原版
-    「空集恒绿」漏掉的那类改动。
+    覆盖 ``TRANSITIONS`` 里全部 24 条迁移（含 4 个自环：``VOLUME_PRESS`` 不改状态、
+    只发 NOTIFY，最容易在重构时被整条漏掉）。自环分支返回空列表就立刻转红 ——
+    这正是原版「空集恒绿」漏掉的那类改动。
     """
     engine, machine = _engine(initial=source)
     before = machine.generation
