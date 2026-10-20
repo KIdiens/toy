@@ -11,7 +11,8 @@
 **机器可检**的绑定，否则下次改常量又会漂移，且漂移不会被任何人发现。
 
 **判别力**：把 ``database.py`` 的常量改成 5000（或文档改成 5000）→ 本文件转红。
-实测已双向验证过。
+另有 ``test_the_connection_really_applies_the_documented_busy_timeout`` 兜住
+「常量/文档都对、但连接上生效的 PRAGMA 是别的数」这一空洞（实测原 3 条全绿）。
 
 **只锁``BUSY_TIMEOUT_MS``**：它是本轮唯一被用户授权同步的数值。
 ``MAX_*``/超时类数字的核对结论只写进报告，不在本文件断言—— 未经确认不得
@@ -21,7 +22,7 @@ from __future__ import annotations
 
 import re
 
-from host.storage.database import BUSY_TIMEOUT_MS
+from host.storage.database import BUSY_TIMEOUT_MS, Database
 
 from tests.support import TOY_ROOT
 
@@ -67,6 +68,39 @@ def test_busy_timeout_pragma_line_matches_design_doc() -> None:
     assert set(found) == {str(BUSY_TIMEOUT_MS)}, (
         f"文档执行顺序清单里的 busy_timeout 有多个不一致的值: {found}，"
         f"实现是 {BUSY_TIMEOUT_MS}"
+    )
+
+
+def _effective_busy_timeout_ms(tmp_path) -> int:
+    """真开一条 ``Database`` 连接，读回**生效的** ``PRAGMA busy_timeout``。"""
+    database = Database(tmp_path / "pragma-probe.sqlite3")
+    try:
+        row = database.connect().execute("PRAGMA busy_timeout").fetchone()
+    finally:
+        database.close_all()
+    assert row is not None, "PRAGMA busy_timeout 没有返回值"
+    return int(row[0])
+
+
+def test_the_connection_really_applies_the_documented_busy_timeout(tmp_path) -> None:
+    """断言连接上**真正生效**的 busy_timeout，而不是只看常量与文档是否对齐。
+
+    改前的三条用例全部在「文档文本 ↔ ``BUSY_TIMEOUT_MS`` 常量」之间比对。
+    这留下一个空洞：常量、文档、测试三方可以完全自洽，而连接上的 PRAGMA 另有
+    来源。实测（反向验证）：把 ``database.py`` 的
+    ``f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}"`` 硬编码成
+    ``"PRAGMA busy_timeout = 5000"``（常量仍是 500），本文件 3 条**全绿** ——
+    整个「快速失败」的承诺其实已经不成立了，却无人报警。
+
+    这里读的是 sqlite 自己记下的值（``PRAGMA busy_timeout`` 的读回值），
+    所以常量、文档、生效值三者被真正串成一条链。
+    """
+    effective = _effective_busy_timeout_ms(tmp_path)
+    assert effective > 0, f"busy_timeout 被关成了 {effective}：并发写的正常重叠会立刻失败"
+    assert effective == BUSY_TIMEOUT_MS, (
+        f"连接上生效的 busy_timeout 是 {effective}ms，实现常量声明的是 "
+        f"{BUSY_TIMEOUT_MS}ms —— PRAGMA 那一行与常量脱钩了（文档写的是同一个数，"
+        "所以「文档 ↔ 常量」比得再勤也发现不了）"
     )
 
 
