@@ -261,10 +261,31 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         改完动作、还没保存播放，此时动作可能属于任意角色。按当前激活角色取限幅会
         拿 role2 的限幅去判 role1 的动作，产生「明明合法却被拒」的假阳性。
         动作里没有合法 ``role_id`` 时 ``validate`` 本身会先拒掉格式。
+
+        **角色未加载必须判非法，不能回落到固件区间**（P2-2，实测）：``role_limits``
+        的回落是给**播放路径**用的兜底，本方法复用它就会把「角色 2 根本没装」吞掉 ——
+        ``roles=[1,3]`` 时 ``validate_action(role_id=2, 1405us)`` 返回 ``valid: True``，
+        而 role2 的真实限幅是 1420–1580，这个结论是编出来的。没有 ``role.json`` 就
+        没有机械限幅，如实报「未加载」比给一个假的 True 有用。
+
+        代价（误伤面）：想在**未安装的角色**上预校验的作者会拿到 ``False``。这是事实
+        陈述，不是误判；播放路径不受影响，见 :meth:`play_action` 与
+        ``execution._run_play``（它们仍走 :meth:`role_limits` 的回落）。
         """
-        from host.motion.validation import validate  # noqa: PLC0415  （延迟导入，避免循环）
+        from host.motion.validation import VALID_ROLES, validate  # noqa: PLC0415  （延迟导入，避免循环）
 
         role_id = action.get("role_id") if isinstance(action, dict) else None
+        # 只对**格式合法**的 role_id 提前判定：非 int（含 bool/字符串/缺失）与超出
+        # 1–3 的编号一律交给 ``validate`` 报「格式版本或角色编号错误」—— 否则诊断
+        # 信息会退化成一句「角色 None/9 未加载」，把格式问题说成安装问题。
+        if type(role_id) is int and role_id in VALID_ROLES and not self.roles.exists(role_id):
+            return {
+                "valid": False,
+                "errors": [{
+                    "path": "action.role_id",
+                    "message": f"角色 {role_id} 未加载，无法按机械限幅校验",
+                }],
+            }
         min_us, max_us = self.role_limits(role_id)
         try:
             validate(action, min_us=min_us, max_us=max_us)

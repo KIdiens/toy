@@ -130,13 +130,26 @@ class WorkersMixin:
         return self.router.respond_audio(wav)
 
     def _await_recording(self, generation: int) -> Any:
-        """等待本轮录音就绪；若本轮从未开始录音则立即返回 None（不空等）。"""
+        """等待本轮录音就绪；若本轮从未开始录音 / 已被新一轮取代则立即返回 None。
+
+        **每轮都要复查 ``_rec_started_gen``**（P1，实测复现）：只在进入时查一次时，
+        旧请求进入等待后用户又按了一次开始录音 → ``_record_once`` 会 ``_rec_ready.clear()``
+        并把 ``_rec_started_gen`` 改成新代数 → 旧请求的
+        ``_last_recording_gen == generation`` 永远不成立，白白等满 ``REPLY_WAIT_S``（16s）。
+        net 是单消费者，排在后面的 NET_REQUEST 全部被堵住，整套对话链路卡死。
+
+        返回 ``None`` 只会让 ``_respond`` 走「这轮没有录音」的既有分支，不会误把别的
+        代数的录音当成自己的 —— 因为取数据仍然要求 ``_last_recording_gen == generation``。
+        """
         with self._rec_lock:
             if self._rec_started_gen != generation:
                 return None
         deadline = self.clock.now_ms() + int(REPLY_WAIT_S * 1000)
         while self.clock.now_ms() < deadline:
             with self._rec_lock:
+                if self._rec_started_gen != generation:
+                    # 已被新一轮录音取代：本轮不可能再就绪，立即收口，别占着 net 线程
+                    return None
                 if self._rec_ready.is_set() and self._last_recording_gen == generation:
                     return self._last_recording
             self.clock.sleep(RECORD_POLL_S)
