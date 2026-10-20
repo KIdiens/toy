@@ -25,17 +25,20 @@ from host.adapters.queues import CommandRouter
 from host.core.bus import EventBus
 from host.core.engine import Engine, default_dispatcher
 from host.core.events import CommandKind, Event, EventKind
-from host.core.state_machine import SessionStateMachine, State, Trigger
+from host.core.state_machine import TRANSITIONS, SessionStateMachine, State, Trigger
 
 
-def _engine() -> tuple[Engine, SessionStateMachine]:
+def _engine(initial: State = State.IDLE) -> tuple[Engine, SessionStateMachine]:
     """``Engine(bus, out, *, state_machine=...)`` —— bus/out 是必填位置参数。
 
     别写成 ``Engine(machine=...)``：``machine`` 是**仅关键字**参数且名字是
     ``state_machine``。本文件第一版就是这么写错的，12 条用例全红在
     ``TypeError: unexpected keyword argument 'machine'``。
+
+    ``initial`` 供「从任意态出发」的穷举用例用：直接把状态机摆在迁移的**源态**，
+    比顺着表一路 ``fire`` 过去更直接，也不受前置迁移的守卫影响。
     """
-    machine = SessionStateMachine(initial=State.IDLE)
+    machine = SessionStateMachine(initial=initial)
     return Engine(EventBus(), CommandRouter(), state_machine=machine), machine
 
 
@@ -231,21 +234,54 @@ def test_role_switch_invalidates_commands_from_the_previous_generation() -> None
     assert all(c.generation < machine.generation for c in stale_commands)
 
 
-@pytest.mark.parametrize("trigger", [
-    Trigger.BOOT_OK, Trigger.DIALOG_PRESS, Trigger.REC_STOP,
-    Trigger.REC_CANCEL, Trigger.PERFORM_PRESS, Trigger.VOLUME_PRESS,
-])
-def test_every_transition_produces_commands_with_the_state_machine_generation(
-        trigger: Trigger) -> None:
-    """不变量：任何迁移产出的命令，代数都必须是 ``state_machine`` 当前的某个值。
+# 状态表里**每一条**迁移都拿来跑一遍。为什么不是手挑几个触发键：
+# 原版只挑 6 个触发键、且**都从 IDLE 出发**，其中 BOOT_OK / REC_STOP / REC_CANCEL
+# 在 IDLE 下是非法迁移，``apply`` 老老实实返回 ``[]`` —— 而用例体是
+# 「``for command in commands: 断言代数``」，空列表时循环体一次都不执行，
+# 于是这 3 个参数位是**恒绿**的。审计实测：把自环分支 ``return [notify]`` 改成
+# ``return []``，该目录 416 条用例全绿，本条毫无反应（本次复现：穷举后 4 条自环红）。
+# 改为穷举 ``TRANSITIONS`` 后，源态由 ``initial=`` 直接给出，每条都是合法迁移，
+# 命令列表必然非空（``apply`` 成功时至少有一条 NOTIFY），空集才真正等于缺陷。
+TRANSITION_CASES = [(*key, dest) for key, dest in TRANSITIONS.items()]
 
-    刻意覆盖**自环迁移**（``VOLUME_PRESS``）—— 它不改变状态、不发 EXIT/ENTER，
-    只发一条 NOTIFY，最容易在重构时被漏掉。
+
+def _case_id(case: tuple[State, Trigger, State]) -> str:
+    return f"{case[0].value}-{case[1].value}->{case[2].value}"
+
+
+@pytest.mark.parametrize("source,trigger,destination", TRANSITION_CASES,
+                         ids=[_case_id(c) for c in TRANSITION_CASES])
+def test_every_transition_produces_commands_with_the_state_machine_generation(
+        source: State, trigger: Trigger, destination: State) -> None:
+    """不变量：**每条**合法迁移都必须产出命令，且代数只能是迁移前/后的值。
+
+    覆盖全部 23 条迁移（含 4 个自环：``VOLUME_PRESS`` 不改状态、只发 NOTIFY，
+    最容易在重构时被整条漏掉）。自环分支返回空列表就立刻转红 —— 这正是原版
+    「空集恒绿」漏掉的那类改动。
     """
-    engine, machine = _engine()
-    machine.fire(Trigger.BOOT_OK)
-    for command in engine.apply(trigger):
-        assert command.generation == machine.generation, (
-            f"{trigger} 产出的 {command.kind} 代数 {command.generation} "
-            f"与状态机 {machine.generation} 不符"
+    engine, machine = _engine(initial=source)
+    before = machine.generation
+    commands = engine.apply(trigger)
+
+    assert machine.state is destination, (
+        f"{source.value} + {trigger.value} 落到 {machine.state.value}，"
+        f"状态表写的是 {destination.value}"
+    )
+    # **判别力所在**：没有这一条，下面的循环在空列表上等于没跑。
+    assert commands, (
+        f"{source.value} + {trigger.value} 未产生任何命令"
+        f"（合法迁移至少要有一条 NOTIFY；空集会让代数断言恒绿）"
+    )
+    # EXIT 命令应带**迁移前**的代数（描述正在离开的会话），ENTER/NOTIFY 带迁移后的；
+    # 精确到「哪条命令该用哪个」的强断言在上面的专项用例里，这里只钉值域。
+    allowed = {before, machine.generation}
+    for command in commands:
+        assert command.generation in allowed, (
+            f"{source.value} + {trigger.value} 产出的 {command.kind} 代数 "
+            f"{command.generation} 既不是迁移前的 {before} 也不是迁移后的 "
+            f"{machine.generation}"
         )
+    assert any(c.generation == machine.generation for c in commands), (
+        f"{source.value} + {trigger.value} 没有任何命令带迁移后的代数 "
+        f"{machine.generation} —— NOTIFY 的代数来源被改坏了？"
+    )
