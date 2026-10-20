@@ -293,8 +293,10 @@ def _json_type_of(declared: dict[str, object]) -> str:
 def _expected_schema(declared: dict[str, object]) -> dict[str, object]:
     """**独立于 ``build_spec``** 地按 JSON Schema 语义写出「应该长什么样」。
 
-    刻意不复用产品代码的映射表逻辑：期望值必须来自声明原文，否则就成了
-    「拿实现验实现」。``build_spec`` 丢弃任一约束键，这里立刻对不上。
+    期望值只来自声明原文，不经过 ``build_spec`` —— 否则就成了「拿实现验实现」。
+    （``type`` 名仍走 ``JSON_TYPE_NAMES``，那是另一件事：它自身由本文件上半部分
+    的 ``test_json_type_names_cover_every_supported_python_type`` 单独钉住。）
+    ``build_spec`` 丢弃或改写任一约束键，这里立刻对不上。
     """
     schema: dict[str, object] = {"type": _json_type_of(declared)}
     choices = declared.get("choices")
@@ -330,6 +332,15 @@ def test_declared_constraints_reach_the_schema_verbatim(entry: _DeclaredSpec) ->
         f"{entry.label} 的 schema 与声明不符：\n"
         f"  声明 {entry.declared}\n  期望 {_expected_schema(entry.declared)}\n"
         f"  实际 {schema}"
+    )
+    # required 不在单个 property 里，而在 parameters["required"] 名单上 —— 一起钉住：
+    # 必填参数漏进/误进名单，模型就会少传或多传一个实参，报错点离根因很远。
+    parameters = build_spec("t", "d", (entry.spec,)).parameters
+    in_required = entry.spec.name in parameters["required"]
+    assert in_required is bool(entry.spec.required), (
+        f"{entry.label} 的 required 声明是 {entry.spec.required}，"
+        f"但 schema 的 required 名单 {parameters['required']} "
+        f"{'包含' if in_required else '不含'}它"
     )
 
 

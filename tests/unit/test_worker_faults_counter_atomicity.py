@@ -40,12 +40,23 @@ from pathlib import Path
 
 from host.adapters.ports import AppContext
 
-#: 两处自增所在的文件（execution.run_forever / workers._on_worker_error）。
-BUMP_FILES = ("host/adapters/execution.py", "host/adapters/workers.py")
+#: 自增只应出现在这两处（``execution.run_forever`` / ``workers._on_worker_error``）。
+#:
+#: 但**扫描面是 ``host/**.py`` 全域**：只在写死的两个文件里数，等于默许第三处
+#: 自增悄悄出现（``test_worker_faults_only_read_for_diagnostics`` 也会放过它，
+#: 那条把 ``+= 1`` 当合法的「诊断写入」跳过了）。全域扫描才能把「多出来一处」
+#: 与「少了一处」一并咬住。
+EXPECTED_BUMPS = {"host/adapters/execution.py": 1, "host/adapters/workers.py": 1}
 
 
 def _repo() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _host_files() -> list[str]:
+    """``host/**.py`` 的相对路径（posix 分隔符，跨平台可比）。"""
+    return [path.relative_to(_repo()).as_posix()
+            for path in sorted((_repo() / "host").rglob("*.py"))]
 
 
 def _read(rel: str) -> str:
@@ -134,13 +145,14 @@ def test_increment_is_not_split_into_read_modify_write() -> None:
     ``faults = self.worker_faults`` / ``self.worker_faults = faults + 1``，
     ``AugAssign`` 少一个、``Assign`` 多一个，两条断言同时咬住。
     """
-    observed = {rel: len(_augmented_bumps(rel)) for rel in BUMP_FILES}
-    assert observed == dict.fromkeys(BUMP_FILES, 1), (
-        "两处自增（execution.run_forever / workers._on_worker_error）应各自保持"
-        f"一条 `self.worker_faults += 1`，实际 AST 计数 {observed}；"
-        "自增被拆开或复制粘贴多出来的自增都会让前提失效"
+    observed = {rel: len(_augmented_bumps(rel)) for rel in _host_files()}
+    observed = {rel: count for rel, count in observed.items() if count}
+    assert observed == EXPECTED_BUMPS, (
+        "自增应当**只在** execution.run_forever / workers._on_worker_error 各一条"
+        f"`self.worker_faults += 1`，实际（按文件）{observed}；"
+        "自增被拆开、多出一处、或整体消失都会让前提失效"
     )
-    splits = {rel: lines for rel in BUMP_FILES
+    splits = {rel: lines for rel in _host_files()
               if (lines := _plain_assignments(rel))}
     assert not splits, (
         f"self.worker_faults 被普通赋值（=）写过：{splits}。"
