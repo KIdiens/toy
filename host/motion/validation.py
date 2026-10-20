@@ -42,6 +42,15 @@ def validate(action: Mapping[str, Any], *,
         raise ValueError(
             f"限幅必须在固件保守区间 {LOW} 至 {HIGH} 微秒内且下限不高于上限"
         )
+    # 形状先于内容：``action.get`` 只对 Mapping 成立。此前这里直接 ``action.get(...)``，
+    # 传入 ``None`` / 列表会让 ``AttributeError`` 穿出校验层，一路逃成 HTTP 500，
+    # 在表演键路径上打穿 motion worker（PERFORM_DONE 永不产生 → 永久 PERFORMING）。
+    # 非 Mapping 属**域外输入**（冻结基线抛的是 AttributeError，不是契约），此处显式
+    # 抛 ValueError —— 与其它非法输入同一失败语义，调用方按「内容非法」处理即可。
+    if not isinstance(action, Mapping):
+        raise ValueError(
+            f"动作必须是对象（JSON object），实际是 {type(action).__name__}"
+        )
     if (
         type(action.get("schema")) is not int
         or action.get("schema") != 1
@@ -53,7 +62,13 @@ def validate(action: Mapping[str, Any], *,
     if not isinstance(frames, list) or not MIN_FRAMES <= len(frames) <= MAX_FRAMES:
         raise ValueError("关键帧数量须为 2 至 1000")
     previous = None
-    for frame in frames:
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, Mapping):
+            # 消息带帧序号（从 1 计）与期望形状，内容作者才能定位到具体那一行。
+            raise ValueError(
+                f"第 {index + 1} 帧必须是对象（frames[{index}] 期望 JSON object，"
+                f"实际是 {type(frame).__name__}）"
+            )
         t, us = frame.get("t_ms"), frame.get("us")
         if type(t) is not int or not 0 <= t <= MAX_T_MS:
             raise ValueError("时间须为 0 至 60000 的整数毫秒")

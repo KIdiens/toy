@@ -300,8 +300,29 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         if not verdict["valid"]:
             self._warn_greet_unresolved(f"动作文件非法: {verdict['errors']}")
             return None
+        # 与 ``play_action`` 同一条入口断言：动作自称的 role_id 必须等于激活角色。
+        # 按键路径没有 409 入口，所以这里降级成「本轮无动作」而不是抛异常。
+        if not self._action_matches_role(action, active):
+            self._warn_greet_unresolved(
+                f"动作文件 role_id={action.get('role_id')} 与激活角色 {active} 不一致")
+            return None
         self.roles.set_current_action(GREET_ACTION_ID)
         return {"action": action, "role_id": int(active), "action_id": GREET_ACTION_ID}
+
+    @staticmethod
+    def _action_matches_role(action: dict[str, Any], role_id: int) -> bool:
+        """动作文件自称的 ``role_id`` 必须等于要播它的角色。
+
+        为什么需要这道断言（实测）：``validate_action`` 按**动作自称的 role_id** 取限幅
+        （编辑态校验要支持任意角色的动作），而 ``_run_play`` 按**激活角色**取限幅复核。
+        两者不一致时，一个「自称 role1、脉宽 1405」的动作放进 role3 目录（限幅
+        1430–1570）会被入口判合法、在下发前被第二道防线判越限 → SAFETY_TRIP 锁机，
+        而它本只是一次内容错误。在入口先拒绝，才符合「内容错误不锁机」的承诺。
+        """
+        try:
+            return int(action.get("role_id")) == int(role_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
 
     def _warn_greet_unresolved(self, reason: str) -> None:
         """解析失败必须**可见**：否则表现为「按了没反应」，排障无从下手。"""
@@ -346,6 +367,15 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                 # `validate()` 抛错，被 `_run_play` 归类为 SAFETY_TRIP → 设备直接进故障锁定，
                 # 「文件写错了」的表现变成「玩具坏了、要人工解除」。
                 raise ConflictError(f"动作文件非法: {verdict['errors']}")
+            if not self._action_matches_role(action, active):
+                # 入口承诺「内容错误在入口拒绝、不锁机」。动作自称的 role_id 与要播它
+                # 的角色不一致时，限幅会按两个不同角色各判一次：入口按动作自称的
+                # role_id 判（通过），下发前按激活角色判（越限 → SAFETY_TRIP 锁机）。
+                # 这是内容错误，必须在入口以 409 拒绝，而不是把设备锁死等人工确认。
+                raise ConflictError(
+                    f"动作文件的 role_id（{action.get('role_id')}）与当前角色 "
+                    f"{active} 不一致，拒绝播放"
+                )
             self.roles.set_current_action(action_id)
             # **先激活令牌、再入队**：worker 可能在本函数返回前就取到命令；若先入队
             # 后激活，它会看到「令牌不符」把这一条新命令当陈旧丢掉。整个 play_action

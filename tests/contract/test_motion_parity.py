@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import random
+from collections.abc import Mapping
 
 import pytest
 from host.motion.interpolation import sample as host_sample
@@ -111,3 +112,40 @@ def test_boundary_messages_are_identical():
         cases.append(action)
     for action in cases:
         assert _outcome(host_validate, action) == _outcome(frozen.validate, action)
+
+
+def test_non_mapping_frames_are_out_of_domain() -> None:
+    """**域外输入声明**：非对象（非 Mapping）的 action / frame 不在 parity 契约内。
+
+    冻结基线 ``software/motion.py::validate`` 对 ``frames: [0, 1]`` 会抛
+    ``AttributeError: 'int' object has no attribute 'get'`` —— 那是基线的实现细节，
+    不是契约。host 侧改为显式 ``ValueError``（可读、可定位第几帧），两者
+    **不要求**异常类型或消息一致。
+
+    因此本测试做两件事：
+
+    1. 钉住「500 条 fuzz 语料里没有这类输入」—— 将来若有人把非 Mapping 的
+       action/frame 混进 ``_build_corpus``，本条立刻转红，强制其显式决策
+       （要么补齐 host/基线的异常对齐，要么承认域外、不要加进语料）；
+    2. 钉住 host 侧对域外输入的拒绝方式是 ``ValueError`` 而不是 ``AttributeError``。
+    """
+    offenders: list[tuple[str, str]] = []
+    for label, action in CORPUS:
+        if not isinstance(action, Mapping):
+            offenders.append((label, "action"))
+            continue
+        frames = action.get("frames")
+        if isinstance(frames, list):
+            for index, frame in enumerate(frames):
+                if not isinstance(frame, Mapping):
+                    offenders.append((label, f"frames[{index}]"))
+    assert not offenders, (
+        "500 条 parity 语料里混入了非 Mapping 的 action/frame："
+        f"{offenders[:5]}。这类输入属**域外**（冻结基线抛 AttributeError），"
+        "不得直接扩进语料；请先对齐两侧异常类型与消息，并更新本条声明。"
+    )
+
+    for out_of_domain in ([1, 2], {"schema": 1, "role_id": 1, "frames": [0, 1]}):
+        with pytest.raises(ValueError) as excinfo:
+            host_validate(out_of_domain)
+        assert not isinstance(excinfo.value, AttributeError)

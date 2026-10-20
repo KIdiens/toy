@@ -111,7 +111,23 @@ class ExecutionMixin:
                 #
                 # 解析不出来（角色没装 / 动作包缺 greet / 文件非法）时**保持原语义**：
                 # 按 ``_finish_without_motion`` 收尾回 IDLE，不动硬件。
-                resolved = self._resolve_greet(command)
+                #
+                # **必须兜住一切异常**（P0）：本函数在 ``run_forever`` 的循环里被直接
+                # 调用，异常穿出去只会让诊断计数加一然后继续下一轮 —— 但「这一轮」的
+                # PERFORM_DONE 永远不会发，状态机卡在 PERFORMING 且没有任何超时兜底
+                # （只有再按一次表演键才能回到 IDLE）。
+                # 内容/装配问题都该降级成「本轮无动作」，而不是废掉一次按键。
+                # 不要写成 ``except Exception: pass``：必须记 error 日志，否则真 bug
+                # 会被永久掩盖（这是上一批假绿整改的教训）。
+                try:
+                    resolved = self._resolve_greet(command)
+                except Exception as exc:  # noqa: BLE001  线程存活与状态收敛优先
+                    if self.log is not None:
+                        self.log.error(
+                            "[motion worker] 表演键动作解析异常，本轮按无动作收尾：%s",
+                            exc, exc_info=True)
+                    self._finish_without_motion(None, command.generation)
+                    return True
                 if resolved is None:
                     # 解析失败也走「无动作收尾」，但收尾函数内部会复核代数 ——
                     # 若这一下按键期间已被取消/换角色，连 PERFORM_DONE 都不能投。
