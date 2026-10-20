@@ -54,7 +54,12 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     mcu_docked: bool = True
     mcu_healthy: bool = True
     mcu_armed: bool = False
-    motion_busy: bool = False
+    # ---- 播放令牌（P0：停止/替换后的在途命令判定）----
+    # 为什么不是一个共享布尔：见 ``motion_busy`` 属性与 ``ExecutionMixin._begin_play``。
+    # ``_play_seq`` 只增不减（单调），``_active_play_seq`` 指向「当前唯一合法的那次播放」；
+    # 两者都只在 ``self._lock`` 内读写（RLock）。
+    _play_seq: int = field(default=0, repr=False)
+    _active_play_seq: int | None = field(default=None, repr=False)
     worker_running: bool = False
     fault: dict[str, str] | None = None
     action_progress: dict[str, Any] | None = None
@@ -101,6 +106,20 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     _thinking_since_ms: int | None = None
     _recording_since_ms: int | None = None
     _rec_entry_mark: int = -1
+
+    # ---------- 派生状态 ----------
+    @property
+    def motion_busy(self) -> bool:
+        """是否有一次播放仍在途 —— **派生量，不可写**。
+
+        P0 缺陷 1 的根因就是这个量曾经是可写的共享布尔：A 播放中被 B 替换后，A 播完
+        走 ``_run_play`` 的陈旧分支，把 **B 的** busy 清成 False；worker 取到 B 时看到
+        False → 当陈旧命令丢弃且不发 ``PERFORM_DONE`` → 永久卡 PERFORMING。
+
+        现在「在途」只有唯一判据：``_active_play_seq`` 是否被激活。``_end_play`` 只在
+        令牌仍是当前令牌时才清，因此旧播放结束**不可能**清掉新播放的忙标志。
+        """
+        return self._active_play_seq is not None
 
     # ---------- 状态快照 ----------
     def _mcu_snapshot(self) -> dict[str, Any]:
@@ -328,23 +347,35 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                 # 「文件写错了」的表现变成「玩具坏了、要人工解除」。
                 raise ConflictError(f"动作文件非法: {verdict['errors']}")
             self.roles.set_current_action(action_id)
-            commands = self.engine.apply(
-                Trigger.PERFORM_PRESS,
-                {"action": action, "role_id": active, "action_id": action_id},
-            )
-            self._deliver(commands)
-            self.motion_busy = any(c.kind is CommandKind.PLAY_ACTION for c in commands)
-            if not self.motion_busy:
-                # 预判已保证目标态是 PERFORMING、必然下发 PLAY_ACTION。走到这里说明
-                # 预判与命令表不一致（装配问题），如实抛出而不是伪装成 409。
-                raise HostError("装配异常：预判可播放，但未下发 PLAY_ACTION 命令")
+            # **先激活令牌、再入队**：worker 可能在本函数返回前就取到命令；若先入队
+            # 后激活，它会看到「令牌不符」把这一条新命令当陈旧丢掉。整个 play_action
+            # 都持 ``self._lock``（RLock），worker 的判定也在同一把锁内，不会插队。
+            seq = self._begin_play()
+            try:
+                commands = self.engine.apply(
+                    Trigger.PERFORM_PRESS,
+                    {"action": action, "role_id": active, "action_id": action_id,
+                     "play_seq": seq},
+                )
+                self._deliver(commands)
+                if not any(c.kind is CommandKind.PLAY_ACTION for c in commands):
+                    # 预判已保证目标态是 PERFORMING、必然下发 PLAY_ACTION。走到这里说明
+                    # 预判与命令表不一致（装配问题），如实抛出而不是伪装成 409。
+                    raise HostError("装配异常：预判可播放，但未下发 PLAY_ACTION 命令")
+            except BaseException:
+                # 没入队成功就不能留下「忙」的假象，否则之后所有停止/替换判定都会错。
+                self._end_play(seq)
+                raise
             self.action_progress = {"action_id": action_id, "seq": 0, "progress_ms": 0}
             return {"scheduled": True, "action_id": action_id, "seq": 0}
 
     def stop_action(self) -> dict[str, Any]:
         with self._lock:
+            # **先让所有在途播放失效，再停机**：停止的语义是「这一刻之后不得再开播」。
+            # 递增序号而不是只清当前令牌 —— 队列里可能还压着更早的 PLAY_ACTION，
+            # 它们也必须一并作废（stop 不改代数，靠 generation 判不出来）。
+            self._invalidate_plays()
             self.player.stop()
-            self.motion_busy = False
             state = self.state_machine.state
             triggers: list[Trigger] = []
             if state is State.PERFORMING:

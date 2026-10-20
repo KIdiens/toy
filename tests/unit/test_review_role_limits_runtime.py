@@ -472,12 +472,16 @@ def test_second_defense_blocks_payload_that_bypassed_the_entry_gate(tmp_path: Pa
         # 换角色会在 motion 队列里留下残留命令（NOTIFY等），不排空的话
         # ``pump_once`` 消费的是旧命令，本条测试会「什么都没验到」地通过。
         context.drain()
+        # 本条绕过的是**入口校验**（play_action 的限幅+角色一致性），不是播放令牌闸门：
+        # 令牌是「这次命令是否仍然有效」的判据，与本测试无关，故显式领一个当前令牌。
+        # 不领的话命令会被 pump_once 当陈旧丢弃，本测试就变成「什么都没验到」的假绿。
+        seq = context._begin_play()
         context._router.put(Command(
             kind=CommandKind.PLAY_ACTION,
-            payload={"action": action, "role_id": role_id, "action_id": "greet"},
+            payload={"action": action, "role_id": role_id, "action_id": "greet",
+                     "play_seq": seq},
             generation=context.state_machine.generation,
         ))
-        context.motion_busy = True
         context.pump_once()
         assert not any(line.startswith("FRAME") for line in written), (
             f"越限幅载荷的 FRAME 下发到了链路：{written}"

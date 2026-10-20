@@ -66,6 +66,38 @@ class ExecutionMixin:
         for command in commands:
             self._router.put(command)
 
+    # ---------- 播放令牌（陈旧判定的唯一依据）----------
+    def _begin_play(self) -> int:
+        """分配并**立即激活**一个新播放令牌；此前所有播放（含在途命令）随即失效。
+
+        调用方必须持 ``self._lock``。语义等价于「我要开始一次播放，别的都作废」：
+        - ``play_action``：入队前调用（替换/停止后重新开播）；
+        - ``pump_once`` 的表演键路径：动作本体解析出来后调用（按键没有入队入口）。
+        """
+        self._play_seq += 1
+        self._active_play_seq = self._play_seq
+        return self._play_seq
+
+    def _end_play(self, seq: int | None) -> None:
+        """结束一次播放：**只清自己的令牌**。
+
+        关键不变量：A 播完时若 B 已激活，``seq``（A）≠ ``_active_play_seq``（B），
+        于是什么也不清 —— B 的忙标志不会被 A 的收尾动作误清。这正是缺陷 1 的修复点。
+        调用方必须持 ``self._lock``。
+        """
+        if seq is not None and seq == self._active_play_seq:
+            self._active_play_seq = None
+
+    def _invalidate_plays(self) -> None:
+        """让所有在途播放失效（``stop_action`` 用）；调用方必须持 ``self._lock``。"""
+        self._play_seq += 1
+        self._active_play_seq = None
+
+    def _is_current_play(self, command: Command) -> bool:
+        """该命令是否就是当前唯一合法的那次播放（须在 ``self._lock`` 内调用）。"""
+        seq = (command.payload or {}).get("play_seq")
+        return seq is not None and seq == self._active_play_seq
+
     # ---------- 队列消费 ----------
     def pump_once(self) -> bool:
         """消费一个工作命令；返回是否消费了命令（供 worker 与测试单步）。"""
@@ -81,20 +113,25 @@ class ExecutionMixin:
                 # 按 ``_finish_without_motion`` 收尾回 IDLE，不动硬件。
                 resolved = self._resolve_greet(command)
                 if resolved is None:
+                    # 解析失败也走「无动作收尾」，但收尾函数内部会复核代数 ——
+                    # 若这一下按键期间已被取消/换角色，连 PERFORM_DONE 都不能投。
                     self._run_play(command)
                     return True
                 command = resolved
-                # **必须在下面的守卫之前置位**：按键路径没有 ``ports.play_action``
-                # 那种「入队即置忙」的入口，若不在此置 ``motion_busy``，紧跟其后的
-                # 守卫会把它当成「已被 stop_action 替换的陈旧命令」丢弃 →
-                # PERFORM_DONE 永不产生 → 设备永久卡在 PERFORMING。
+                # 按键路径没有 ``ports.play_action`` 那种「入队即取令牌」的入口，
+                # 必须在守卫之前显式激活令牌；否则守卫会把它当陈旧命令丢弃 →
+                # PERFORM_DONE 永不产生 → 永久卡 PERFORMING（第 2 组修过的坑）。
                 with self._lock:
-                    self.motion_busy = True
+                    if command.generation != self.state_machine.generation:
+                        return True  # 解析期间被取消/换角色，本条作废
+                    seq = self._begin_play()
+                    command = replace(command, payload={**dict(command.payload or {}),
+                                                        "play_seq": seq})
                     self.action_progress = {
                         "action_id": GREET_ACTION_ID, "seq": 0, "progress_ms": 0,
                     }
             with self._lock:
-                if not self.motion_busy:
+                if not self._is_current_play(command):
                     return True  # 已被 stop/替换：丢弃陈旧运动命令，不移动硬件
             self._run_play(command)
         elif command.kind not in MOTION_SILENT_KINDS:
@@ -121,8 +158,9 @@ class ExecutionMixin:
         """在工作线程执行一个动作；长调用不持锁，结果回写时再取锁。"""
         payload = command.payload
         action = payload.get("action")
+        seq = payload.get("play_seq")
         if not action:
-            self._finish_without_motion()
+            self._finish_without_motion(seq, command.generation)
             return
         try:
             if self.motion is None:
@@ -144,18 +182,26 @@ class ExecutionMixin:
             # OSError 覆盖 pyserial 的 SerialException（串口不存在/被占用/播放中被拔线），
             # 否则它会越过此处、打穿 worker 线程（P0-2）。
             with self._lock:
-                self.motion_busy = False
+                self._end_play(seq)
+                self.action_progress = None
                 self._set_fault(exc)
                 self.bus.publish(Event(EventKind.SAFETY_TRIP, payload={"fault": self.fault},
                                        generation=self.state_machine.generation))
             return
         with self._lock:
             if command.generation != self.state_machine.generation:
-                self.motion_busy = False
-                return  # 期间被取消/换角色：丢弃本轮结果，不回写进度也不发完成事件
+                # 期间被取消/换角色：丢弃本轮结果，不回写进度也不发完成事件。
+                # **只清自己的令牌**：若已被新的播放替换，B 的忙标志必须留着。
+                still_current = self._is_current_play(command)
+                self._end_play(seq)
+                if still_current:
+                    # 离开 PERFORMING 的异常路径必须清进度，否则 /status 会在 IDLE 里
+                    # 一直显示「正在表演 0%」（P2-3）。
+                    self.action_progress = None
+                return
             self.last_result = result
             self.fault = None
-            self.motion_busy = False
+            self._end_play(seq)
             self.action_progress = {
                 "action_id": str(payload.get("action_id", "")),
                 "seq": result.frames_sent,
@@ -164,11 +210,22 @@ class ExecutionMixin:
             self.bus.publish(Event(EventKind.PERFORM_DONE,
                                    generation=self.state_machine.generation))
 
-    def _finish_without_motion(self) -> None:
-        """无动作载荷的 PERFORM_PRESS（如按键表演未选动作）：不移动硬件，直接收尾回 IDLE。"""
+    def _finish_without_motion(self, seq: int | None = None,
+                              generation: int | None = None) -> None:
+        """无动作载荷的 PERFORM_PRESS（如按键表演未选动作）：不移动硬件，直接收尾回 IDLE。
+
+        ``generation`` 非 None 时先复核：若这一下按键期间已发生取消/换角色，则**不投**
+        ``PERFORM_DONE``。否则一条迟到 5ms 的收尾事件会把**新会话**正在表演的动作
+        直接拽回 IDLE（``PERFORMING --PERFORM_DONE--> IDLE`` 是合法迁移）。
+        """
         with self._lock:
-            self.motion_busy = False
-            self.action_progress = None
+            if generation is not None and generation != self.state_machine.generation:
+                self._end_play(seq)
+                return
+            still_current = seq is not None and seq == self._active_play_seq
+            self._end_play(seq)
+            if seq is None or still_current:
+                self.action_progress = None
             self.bus.publish(Event(EventKind.PERFORM_DONE,
                                    generation=self.state_machine.generation))
 
