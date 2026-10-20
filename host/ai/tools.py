@@ -94,6 +94,14 @@ def build_spec(name: str, description: str, params: tuple[ParamSpec, ...]) -> To
             properties[p.name]["minimum"] = p.minimum
         if p.maximum is not None:
             properties[p.name]["maximum"] = p.maximum
+        # ``pattern`` 也必须下发，否则模型看到的契约是**残缺**的：
+        # 线上 7 个参数带正则（``city`` 只允许中英文、``due_at_utc`` 必须是日期形态、
+        # ``item_id`` 有字符集与长度），但模型完全不知道，只能靠本地
+        # ``validate_args`` 事后拒绝 —— 表现是「模型反复给出被拒的参数、
+        # 白白多跑一轮工具调用」。这与组2 修的「type 发成 str」是同一类缺陷：
+        # 发给模型的 schema 必须与真正执行的校验一致。
+        if p.pattern is not None:
+            properties[p.name]["pattern"] = p.pattern
         if p.required:
             required.append(p.name)
     return ToolSpec(

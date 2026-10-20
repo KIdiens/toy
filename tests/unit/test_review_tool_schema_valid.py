@@ -306,7 +306,35 @@ def _expected_schema(declared: dict[str, object]) -> dict[str, object]:
         schema["minimum"] = declared["minimum"]
     if declared.get("maximum") is not None:
         schema["maximum"] = declared["maximum"]
+    # ``pattern`` 是**字符串**约束，同样是模型会读的键。此前 ``build_spec`` 从不下发它，
+    # 而线上 7 个参数带正则（``city``/``due_at_utc``/``item_id`` …）——
+    # 模型拿到的契约里这些约束根本不存在，只能靠本地 ``validate_args`` 事后拒绝，
+    # 表现是「模型反复给出被拒的参数、白白多跑一轮」。与组2 的 ``type`` 非法是同一类。
+    if declared.get("pattern") is not None:
+        schema["pattern"] = declared["pattern"]
     return schema
+
+
+def test_pattern_constraints_are_actually_present_in_the_scan() -> None:
+    """防空集：必须真的扫到**带 ``pattern`` 的声明**，否则上面那条逐键比对是空转。
+
+    断言数量而不是具体参数名 —— 数量变了说明有人增删了带正则的参数，
+    那时应重新确认「这条守卫还覆盖得到」，而不是让它悄悄退化。
+    当前线上有 7 个：content.item_id / content.action_id / reminders.text /
+    reminders.due_at_utc / reminders.idempotency_key / reminders.timezone /
+    weather.city。
+    """
+    with_pattern = [e for e in _DECLARED_SPECS if e.declared.get("pattern") is not None]
+    assert len(with_pattern) >= 5, (
+        f"只扫到 {len(with_pattern)} 个带 pattern 的参数声明，扫描规则可能失效了："
+        f"{[e.label for e in with_pattern]}"
+    )
+    for entry in with_pattern:
+        schema = build_spec("t", "d", (entry.spec,)).parameters["properties"][entry.spec.name]
+        assert "pattern" in schema, (
+            f"{entry.label} 带 pattern 声明，但发给模型的 schema 里没有 —— "
+            "模型只能靠本地事后拒绝，会白跑一轮工具调用"
+        )
 
 
 def test_every_registered_param_spec_produces_a_valid_schema() -> None:
