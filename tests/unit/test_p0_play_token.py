@@ -239,6 +239,10 @@ def test_stale_greet_without_action_does_not_publish_perform_done(
 
     context.bus.publish = record
     try:
+        # 上电会在 work 队列里留下 NOTIFY 等命令：不排空的话 pump_once 消费的是它们，
+        # 本条会「什么都没验到」地通过（假绿）。
+        context.drain()
+        assert context.work.qsize() == 0
         stale_generation = context.state_machine.generation - 1
         context._router.put(Command(
             kind=CommandKind.PLAY_ACTION,
