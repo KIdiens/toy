@@ -31,6 +31,7 @@
 """
 from __future__ import annotations
 
+import ast
 import dis
 import re
 import sys
@@ -38,6 +39,9 @@ import threading
 from pathlib import Path
 
 from host.adapters.ports import AppContext
+
+#: 两处自增所在的文件（execution.run_forever / workers._on_worker_error）。
+BUMP_FILES = ("host/adapters/execution.py", "host/adapters/workers.py")
 
 
 def _repo() -> Path:
@@ -48,15 +52,43 @@ def _read(rel: str) -> str:
     return (_repo() / rel).read_text(encoding="utf-8")
 
 
-def _bump_source() -> str:
-    """取两处自增所在函数的源码文本。
+def _parse(rel: str) -> ast.Module:
+    """把源码解析成 AST。
 
-    刻意**读文件**而不是 ``inspect.getsource``：后者在 pytest 下会因断言重写
-    拿不到源码（实测返回空串，第一版就是这么误报的）。
+    **为什么不是 ``str.count("worker_faults += 1")``**（改前的写法）：字符串计数
+    会把注释、docstring、日志文案里的同样字样一起算进去。在 ``execution.py`` 的
+    自增上方加一行注释 ``# 历史写法：self.worker_faults += 1``，计数就从 2 变 3，
+    本文件当场**假红**（``assert 3 == 2``）—— 代码一个字都没改。
+    而它应有的敏感度（真把自增拆成读-改-写）反倒要靠另一条子串断言兜，形态一变就漏。
+    AST 只看语法结构，注释与字符串字面量天然不参与，两边都对准了
+    （本次实测：加注释 → 7 条全绿；拆成读-改-写 → 转红）。
     """
-    execution = _read("host/adapters/execution.py")
-    workers = _read("host/adapters/workers.py")
-    return "\n".join(part for part in (execution, workers) if part)
+    return ast.parse(_read(rel), filename=rel)
+
+
+def _is_self_worker_faults(node: ast.AST) -> bool:
+    """``self.worker_faults`` 这个属性读取。"""
+    return (isinstance(node, ast.Attribute) and node.attr == "worker_faults"
+            and isinstance(node.value, ast.Name) and node.value.id == "self")
+
+
+def _augmented_bumps(rel: str) -> list[int]:
+    """``self.worker_faults += 1`` 的行号（``AugAssign`` + ``Add``）。"""
+    return [
+        node.lineno for node in ast.walk(_parse(rel))
+        if isinstance(node, ast.AugAssign)
+        and _is_self_worker_faults(node.target)
+        and isinstance(node.op, ast.Add)
+    ]
+
+
+def _plain_assignments(rel: str) -> list[int]:
+    """对 ``self.worker_faults`` 的普通赋值（``=``）的行号 —— 读-改-写的痕迹。"""
+    return [
+        node.lineno for node in ast.walk(_parse(rel))
+        if isinstance(node, ast.Assign)
+        and any(_is_self_worker_faults(target) for target in node.targets)
+    ]
 
 
 # --------------------------------------------------------------- 前提 1：无 Python 层 __setattr__
@@ -95,15 +127,24 @@ def test_worker_faults_is_a_plain_dataclass_field() -> None:
 
 # --------------------------------------------------------------- 前提 3：自增未被拆成两步
 def test_increment_is_not_split_into_read_modify_write() -> None:
-    """禁止出现「先取局部变量再写回」这种真正会丢的形态。"""
-    src = _bump_source()
-    assert src.count("worker_faults += 1") == 2, (
-        "两处自增（execution.run_forever / workers._on_worker_error）应保持 `+= 1` 原样；"
-        f"实际源码形态已变：\n{src}"
+    """禁止出现「先取局部变量再写回」这种真正会丢的形态。
+
+    断言的是 **AST 节点形态**，不是源码文本：注释里写多少遍 ``+= 1`` 都不影响，
+    而一旦真的拆成
+    ``faults = self.worker_faults`` / ``self.worker_faults = faults + 1``，
+    ``AugAssign`` 少一个、``Assign`` 多一个，两条断言同时咬住。
+    """
+    observed = {rel: len(_augmented_bumps(rel)) for rel in BUMP_FILES}
+    assert observed == dict.fromkeys(BUMP_FILES, 1), (
+        "两处自增（execution.run_forever / workers._on_worker_error）应各自保持"
+        f"一条 `self.worker_faults += 1`，实际 AST 计数 {observed}；"
+        "自增被拆开或复制粘贴多出来的自增都会让前提失效"
     )
-    # 读-改-写拆开的典型痕迹：先赋值给别的名字，再写回字段
-    assert "self.worker_faults = self.worker_faults" not in src, (
-        "自增被拆成了读-改-写两步，这在 CPython 下会真的丢计数"
+    splits = {rel: lines for rel in BUMP_FILES
+              if (lines := _plain_assignments(rel))}
+    assert not splits, (
+        f"self.worker_faults 被普通赋值（=）写过：{splits}。"
+        "读-改-写分步在 CPython 下会真的丢计数，必须改回 `+= 1` 或加锁"
     )
 
 
