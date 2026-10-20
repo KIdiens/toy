@@ -326,6 +326,38 @@ def test_normal_single_round_still_gets_its_recording(tmp_path) -> None:
         context.close()
 
 
+def test_request_really_waits_when_recording_is_still_in_flight(tmp_path) -> None:
+    """请求**真正进入等待循环**的单轮：录音还没结束就按了结束，仍必须拿到数据，且等了。
+
+    上一条的录音在按键前就完成了（``ready`` 早已 set），它证明不了「等待没被砍掉」。
+    这一条把「按结束」压在录音阻塞期内（录音 0.5s、0.05s 就按结束），请求必须在循环
+    里等约 0.45s 才拿到数据 —— 既是「不许一刀切成 0」的链路证据，也是「早退只由代数
+    变化触发」的证据：若早退条件写宽松（例如「本轮还没 ready 就返回 None」），
+    ``router.wav_sizes`` 会变成 ``[0]``，本条立刻转红。
+    """
+    context = _context(tmp_path, "inflight.sqlite3")
+    router = _StubRouter()
+    context.router = router
+    context.recorder = _BlockingRecorder(0.5)
+    waits, restore = _timed_await(context)
+    try:
+        with _Running(context):
+            assert context.press_button(1)["state"] == "RECORDING"
+            time.sleep(0.05)                     # 录音还没结束就按结束
+            assert context.press_button(1)["state"] == "THINKING"
+            assert _wait_for(lambda: waits, 6.0), "请求没有返回"
+        _generation, elapsed = waits[0]
+        assert router.wav_sizes == [len(WAV_BYTES)], (
+            f"录音在途时按结束，请求拿到 {router.wav_sizes} 字节 —— 等待被提前放弃"
+        )
+        assert elapsed >= 0.2, (
+            f"只等了 {elapsed:.2f}s —— 请求没有真的等待在途录音（录音需 0.5s）"
+        )
+    finally:
+        restore()
+        context.close()
+
+
 @pytest.mark.parametrize("delay", [0.05, 0.2])
 def test_recording_is_delivered_for_each_single_round(tmp_path, delay: float) -> None:
     """两档录音耗时都要拿到数据（不依赖某个特定阻塞时长的巧合）。"""
