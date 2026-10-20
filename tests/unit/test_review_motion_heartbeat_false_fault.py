@@ -25,11 +25,16 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 
 import pytest
-from host.adapters.ports import WORKER_LIVENESS_MS
+from host.adapters.ports import WORKER_LIVENESS_MS, AppContext
+from host.adapters.runtime import build_context
+from host.config.settings import load_settings
+
+from tests.support import TOY_ROOT
 
 
 class _Ctx:
@@ -54,10 +59,85 @@ class _CtxWithProbe(_Ctx):
         return AppContext.worker_alive.__get__(self, type(self))
 
 
-def test_motion_thread_reference_is_registered():
-    """context 上必须有 motion 线程的登记位，否则探针根本查不到它。"""
-    ctx = _CtxWithProbe()
-    assert hasattr(ctx, "_motion_thread"), "缺少 motion 线程登记字段"
+def test_motion_thread_reference_is_a_real_field_of_app_context():
+    """``AppContext`` 上必须有 motion 线程的登记位，否则探针根本查不到它。
+
+    **为什么断言的是 ``dataclasses.fields(AppContext)`` 而不是 ``hasattr(ctx, ...)``**：
+    改前这条是 ``ctx = _CtxWithProbe(); assert hasattr(ctx, "_motion_thread")`` ——
+    而 ``_Ctx.__init__`` 自己就有 ``self._motion_thread = motion_thread``，
+    于是它断言的是**测试夹具自己的赋值**，与产品代码毫无关系，恒真。
+    实测：删掉 ``ports.py`` 里的 ``_motion_thread`` 字段，本文件 15 条全绿。
+    改成查真实类的字段后，删字段 → 本条立刻转红（而下面的行为用例仍会绿，
+    因为 dataclass 没开 ``slots``，动态属性照样能赋 —— 两条缺一不可）。
+    """
+    names = {field.name for field in dataclasses.fields(AppContext)}
+    assert "_motion_thread" in names, (
+        f"AppContext 缺 motion 线程登记字段，实际字段：{sorted(names)}"
+    )
+    assert "_domain_threads" in names, "领域线程登记位也必须是真实字段（探针逐个查 is_alive）"
+
+
+def _context_with_live_domain_thread(tmp_path):
+    """真 ``AppContext`` + 一个真实存活的领域线程；返回 (context, 收尾函数)。
+
+    不调 ``start_workers()``：那是完整的三条消费循环，本用例只需要
+    ``worker_alive`` 看到的「领域线程非空且健在」这一前提。
+    """
+    settings = load_settings({"DB_PATH": str(tmp_path / "hb.sqlite3")})
+    context = build_context(settings, simulate=True, root=TOY_ROOT)
+    stop = threading.Event()
+    domain = threading.Thread(target=stop.wait, name="probe-domain", daemon=True)
+    domain.start()
+    context._domain_threads.append(domain)
+
+    def finish() -> None:
+        stop.set()
+        domain.join(timeout=2.0)
+        context.close()
+
+    return context, finish
+
+
+def test_real_context_reads_the_registered_motion_thread_not_the_heartbeat(tmp_path) -> None:
+    """行为层：真 context 的 ``register_motion_thread`` 必须真的影响探针结论。
+
+    走过 ``AppContext.worker_alive`` 的整条实现（而不是在夹具里模拟），
+    依次钉住三件事：
+    1. 未登记 + 无心跳 → 报活（启动窗口，第 2 组成果）；
+    2. 登记一个**已经结束**的线程 → 报故障，而且心跳再新鲜也救不回来
+       （线程 ``is_alive()`` 是唯一依据 —— 这正是本组修复的核心）；
+    3. 注销登记 → 退回心跳判定：陈旧心跳报故障、新鲜心跳报活。
+    第 3 段同时守住「心跳兜底没被顺手删掉」。
+    """
+    context, finish = _context_with_live_domain_thread(tmp_path)
+    try:
+        assert context.worker_alive() is True, (
+            "领域线程健在、motion 未登记、心跳尚无：应报活（启动窗口不误报）"
+        )
+        dead = threading.Thread(target=lambda: None, name="motion-dead")
+        dead.start()
+        dead.join(timeout=2.0)
+        assert not dead.is_alive(), "前置不成立：这里需要一个已经结束的线程"
+
+        context.register_motion_thread(dead)
+        assert context.worker_alive() is False, (
+            "登记了已结束的 motion 线程却仍报活 —— register_motion_thread 写的字段"
+            "没被 worker_alive 读到"
+        )
+        context.worker_heartbeat_ms = context.clock.now_ms()
+        assert context.worker_alive() is False, (
+            "心跳新鲜就把已死的 motion 线程判成健在：判活又退回看心跳了"
+        )
+
+        context.register_motion_thread(None)
+        context.worker_heartbeat_ms = None
+        assert context.worker_alive() is True, "注销登记且无心跳时应回到「领域线程健在即报活」"
+        context.worker_heartbeat_ms = context.clock.now_ms() - (WORKER_LIVENESS_MS + 3000)
+        assert context.worker_alive() is False, (
+            "未登记 motion 线程时，陈旧心跳必须报故障（心跳兜底不可丢）"
+        )
+    finally:
+        finish()
 
 
 def test_heartbeat_never_written_does_not_report_dead_when_threads_registered():
