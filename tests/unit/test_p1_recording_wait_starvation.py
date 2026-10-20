@@ -40,6 +40,17 @@ GENERATION = 6
 NEXT_GENERATION = 7
 WAV_BYTES = b"RIFF" + b"\x00" * 64
 
+# ``REPLY_WAIT_S`` 的语义是「兜底上限」：它必须**长于**单次录制上限（15s，
+# 见 ``recorder.policy.max_seconds``），否则正常的一轮慢录制会被判成「没有录音」。
+#
+# 这里钉的是**量级区间**，不是 16.0 这个字面值 —— 目的有两个：
+#   1. 合理调参（15.5 / 20.0 之类）不该逼人改测试；
+#   2. 把上限砍到 2.0s 这种「等待形同虚设」的改动必须转红。
+# 改前这两条断言是 ``now_ms == int(REPLY_WAIT_S*1000)`` / ``sleeps == REPLY_WAIT_S/RECORD_POLL_S``
+# 由被测常量**算出来的**：常量改小，期望值同步改小，永远相等 —— 恒绿。
+MIN_REPLY_WAIT_S = 10.0
+MAX_REPLY_WAIT_S = 30.0
+
 
 # ---------------------------------------------------------------- 装置
 class _FakeClock:
@@ -187,7 +198,7 @@ def test_newer_recording_round_releases_old_waiter_immediately(tmp_path) -> None
         assert clock.now_ms() <= 5 * int(RECORD_POLL_S * 1000), (
             f"旧请求空等了 {clock.now_ms()}ms —— 代数已变，本轮不可能再就绪，应立即返回"
         )
-        assert clock.now_ms() < int(REPLY_WAIT_S * 1000) / 4
+        assert clock.now_ms() < 1000, "旧请求的等待必须是「立即」量级（绝对上界 1s）"
     finally:
         context.close()
 
@@ -247,7 +258,19 @@ def test_stale_recording_from_previous_round_is_never_taken(tmp_path) -> None:
 
 
 def test_timeout_ceiling_survives_the_fix(tmp_path) -> None:
-    """代数一直不变、录音一直不就绪 → 仍在 ``REPLY_WAIT_S`` 处收口，不是无限等。"""
+    """代数一直不变、录音一直不就绪 → 仍在兜底上限处收口，不是无限等、也不是提前放弃。
+
+    **判别力**（改前是这样丢的）：原版期望值由被测常量算出
+    （``now_ms == REPLY_WAIT_S*1000``、``sleeps == REPLY_WAIT_S/RECORD_POLL_S``），
+    把 ``REPLY_WAIT_S`` 从 16.0 改成 2.0，期望值跟着变成 2000/100，等式照样成立 ——
+    常量被砍成「等待形同虚设」也测不出来。现在钉的是**绝对区间**：
+    上限必须落在一个合理的秒级区间内，且实际等待必须真的走到那里。
+    """
+    assert MIN_REPLY_WAIT_S <= REPLY_WAIT_S <= MAX_REPLY_WAIT_S, (
+        f"REPLY_WAIT_S={REPLY_WAIT_S} 越出合理区间 "
+        f"[{MIN_REPLY_WAIT_S}, {MAX_REPLY_WAIT_S}]s：它是「> 单次录制上限」的兜底，"
+        "调小会让正常慢录制被判成「这轮没有录音」，调大则让 net 单消费者白等太久"
+    )
     context = _bare(tmp_path)
     try:
         _set_started(context, GENERATION)
@@ -255,8 +278,15 @@ def test_timeout_ceiling_survives_the_fix(tmp_path) -> None:
         context.clock = clock
 
         assert context._await_recording(GENERATION) is None
-        assert clock.now_ms() == int(REPLY_WAIT_S * 1000)
-        assert clock.sleeps == int(REPLY_WAIT_S * 1000) // int(RECORD_POLL_S * 1000)
+        elapsed_ms = clock.now_ms()
+        assert elapsed_ms >= MIN_REPLY_WAIT_S * 1000, (
+            f"等待在 {elapsed_ms}ms 就放弃了（上限应 >= {MIN_REPLY_WAIT_S}s）—— "
+            "等待循环提前收口，录音慢一点就会被当成「没有录音」"
+        )
+        assert elapsed_ms <= MAX_REPLY_WAIT_S * 1000, (
+            f"等待走了 {elapsed_ms}ms，超出上限区间 {MAX_REPLY_WAIT_S}s —— 兜底失效"
+        )
+        assert clock.sleeps >= 1, "一次都没进等待循环"
     finally:
         context.close()
 
@@ -281,17 +311,22 @@ def test_rapid_restart_does_not_starve_net_thread(tmp_path) -> None:
                 time.sleep(0.03)
                 states.append(context.press_button(1)["state"])
             assert states[0] == "RECORDING" and "THINKING" in states, states
-            # 上限刻意放到 REPLY_WAIT_S 之上：修复前这里要等满 16s 才拿到数据，
-            # 让它自己走完，才能把「等了 16.0s」这个数字写进失败信息。
-            assert _wait_for(lambda: waits, REPLY_WAIT_S + 4.0), (
+            # 超时给**绝对值**：改前是 ``REPLY_WAIT_S + 4.0``，常量一缩小这里跟着缩，
+            # 「等满 16s 才回来」的形态反而可能在阈内溜过去。
+            assert _wait_for(lambda: waits, 20.0), (
                 "请求始终没返回（被饿死），用例失去判别力"
             )
             assert context.net_queue.qsize() == 0, "net 队列仍有积压"
         worst = max(elapsed for _gen, elapsed in waits)
         assert len(waits) >= 1
-        assert worst < REPLY_WAIT_S / 8, (
-            f"旧请求最长等了 {worst:.2f}s —— 逼近 REPLY_WAIT_S={REPLY_WAIT_S}s，"
-            f"net 单消费者被堵死；各次等待: {[(g, round(d, 2)) for g, d in waits]}"
+        # 阈值必须是**绝对值**：改前写成 ``REPLY_WAIT_S / 8``，于是把常量调到 2.0 后
+        # 阈值同步变成 0.25s，一次 0.30s 的正常等待（录音替身阻塞 0.3s）就被判成
+        # 「饿死」—— 假红。要钉的是「与 16s 量级的兜底相比，这个等待必须短到可以
+        # 忽略」，那是一个绝对时间（< 1s），不该随被测常量缩放。
+        assert worst < 1.0, (
+            f"旧请求最长等了 {worst:.2f}s —— 与 REPLY_WAIT_S={REPLY_WAIT_S}s 的兜底"
+            f"处于同一量级，net 单消费者被堵死；各次等待: "
+            f"{[(g, round(d, 2)) for g, d in waits]}"
         )
     finally:
         restore()
@@ -316,7 +351,7 @@ def test_normal_single_round_still_gets_its_recording(tmp_path) -> None:
             assert context.press_button(1)["state"] == "THINKING"
             assert _wait_for(lambda: waits, 6.0), "请求没有返回"
         generation, elapsed = waits[0]
-        assert elapsed < REPLY_WAIT_S / 4, f"正常单轮等了 {elapsed:.2f}s"
+        assert elapsed < 2.0, f"正常单轮等了 {elapsed:.2f}s（绝对上界 2s）"
         assert router.wav_sizes == [len(WAV_BYTES)], (
             f"路由器拿到的 wav 长度 {router.wav_sizes} —— "
             f"没拿到本轮录音（应为 {len(WAV_BYTES)} 字节）"
