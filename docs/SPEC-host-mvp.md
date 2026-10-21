@@ -106,8 +106,10 @@ Base URL：`http://127.0.0.1:8000/api/v1`（默认仅绑回环；开放局域网
 | GET | `/status` | 当前角色、网络、动作、故障 | — | `Status` | 200 |
 | GET | `/events` | 实时状态与故障事件流（WebSocket） | — | WS 流 | 101 / 401 |
 | GET | `/features` | 当前功能开关状态 | — | — | 200 |
-| GET | `/roles` | 可用角色及配置版本 | — | `RoleSummary[]` | 200 |
+| GET | `/roles` | 可用角色及配置版本（每项含 `persona`，可为 `null`） | — | `RoleSummary[]` | 200 |
 | PATCH | `/roles/active` | 切换当前角色 | — | `Envelope` | 200 / 409 |
+| PATCH | `/roles/{role_id}/persona` | 覆盖该角色的人设（写盘前校验，越界/尖括号/换行即拒绝） | `PersonaOut` | `PersonaSaveResult` | 200 / 422 |
+| POST | `/roles/{role_id}/persona/preview` | 只编译人设、不写盘（内容问题用 `valid:false` 表达） | `PersonaOut` | `PersonaPreviewResult` | 200 |
 | POST | `/actions/validate` | **只校验，不移动硬件** | `ActionValidateRequest` | `ActionValidateResult` | 200 |
 | POST | `/actions/play` | 当前角色匹配且安全检查成功才播放 | `ActionPlayRequest` | `Envelope` | 200 / 409 |
 | POST | `/actions/stop` | 立即取消队列并通知 MCU | — | `Envelope` | 200 |
@@ -122,11 +124,11 @@ Base URL：`http://127.0.0.1:8000/api/v1`（默认仅绑回环；开放局域网
 
 **契约约束（全部强制）**：
 1. 统一响应信封 `{code, data, message}`
-2. **每个写操作必须带 `request_id`**
+2. **每个写操作必须带 `request_id`**（人设两个端点例外：请求体就是 `PersonaOut` 本体，追踪号走 `X-Request-Id` 头，见 `openapi.yaml`）
 3. 播放请求必须附**预期 `role_id`** 与动作版本；第二个播放请求默认拒绝或显式替换，**绝不静默叠加两个时间轴**（返回 409）
 4. `/status` 及任何端点**不得返回密钥**
 
-Schema 共 14 个：`Envelope`、`Status`、`Fault`、`RoleSummary`、`ActionDoc`、`ActionValidateRequest`、`ActionValidateResult`、`ActionPlayRequest`、`ActionPlayResult`、`Memory`、`Reminder`、`ReminderCreateRequest`、`Settings`、`SettingsPatch`。
+Schema 共 22 个：`Envelope`、`ErrorEnvelope`、`StorageBusy`、`Status`、`Fault`、`RoleSummary`、`PersonaOut`、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`、`ActionDoc`、`ActionFile`、`ActionValidateRequest`、`ActionValidateResult`、`ActionPlayRequest`、`ActionPlayResult`、`Features`、`Memory`、`Reminder`、`ReminderCreateRequest`、`Settings`、`SettingsPatch`。人设相关为 `PersonaOut`（6 字段，全空 + `max_chars=100` 视为清空）、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`。
 
 ---
 
@@ -151,6 +153,7 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 |---|---|---|---|---|
 | 设备状态面板 | `/` | 顶栏 Connection State Chip（常驻）、四轴限位横条（绿/琥珀/红 + 1500μs 中位刻度）、故障区 | `/status`、`/events`、`/features` | 浅色 |
 | 动作编排器 | `/editor` | 三栏工作台：左 260px 四轴轨道列表 / 中时间轴（刻度尺 + 可拖播放指针 + 菱形关键帧 + 音频波形轨 + 播放控制条）/ 右 300px 属性与限位校验面板 | `/actions/validate`、`/actions/play`、`/actions/stop`、`/roles`、`/roles/active` | **深色（默认）** |
+| 角色性格 | `/roles` | 角色卡网格（音色/配置版本 chip + 「当前激活」标记）+ 人设表单（6 字段、字数计数、脏检查切换拦截）+ 编译预览（只读） | `/roles`、`/roles/{role_id}/persona`、`/roles/{role_id}/persona/preview` | 浅色 |
 | 记忆管理 | `/memories` | 列表（摘要/类型/来源时间/状态/操作）+ 行内删除确认 + 清空弹窗 | `/memories`、`/memories/{id}` | 浅色 |
 | 提醒管理 | `/reminders` | 列表（时间/内容/角色音色/状态/下次触发）+ 新建表单（≤4 字段） | `/reminders`、`/reminders/{id}` | 浅色 |
 | 设置 | `/settings` | 音量语言 / 网络配网 / 儿童模式 / 内容审核 / 高级危险区 | `/settings`、`/content/import` | 浅色 |
@@ -214,6 +217,9 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 | AC-24 | 不叠加时间轴 | Given 已有播放中的时间轴，When 收到第二个播放请求，系统**必须**默认拒绝或显式替换，**不得静默叠加** | P0 |
 | AC-25 | 资源包安全 | Given 含 `../`、绝对路径、符号链接、超量文件或高压缩比的 zip，When 导入，系统**必须**全部拒绝，失败**必须**保留旧版本 | P1 |
 | AC-26 | 三按键表 | When 注入 `BUTTON n` 事件，系统**必须**逐格符合开发书 5.2 行为表（含「未装公仔不启用电机」） | P1 |
+| AC-27 | 切换前确认 | While 用户正在编辑人设且表单已脏，When 点击另一个角色，系统**必须**先请求确认（行内二次确认）；取消后角色与已填内容**必须**保持不变 | P1 |
+| AC-28 | 人设不得越权 | When 编译人设，系统**必须**由主机追加安全规则；人设内容**不得**覆盖、取消或削弱内容审核、动作联锁与固定拒绝模板 | P0 |
+| AC-29 | 人设内容校验 | If 人设包含尖括号或换行，When 保存，系统**必须**返回 422 且**不写入**磁盘；同一内容走预览端点则**必须**返回 200 + `valid:false`（不是异常） | P1 |
 
 ---
 
@@ -302,3 +308,4 @@ pytest -q && ruff check .
 | 2026-09-21 | Spec v1.0 生成 | 三文档经用户确认，按 SOP 进入 Phase 1.5 | 全部 |
 | 2026-09-22 | 修正 §12 判定段交叉引用：架构 §10.1 实物项枚举 `C1–C12` → `C1–C13` | 架构 §10.1 新增 C13（桩级输出审核的误拦边界）后本处编号未同步；由运维卜宕机交叉核对发现 | 仅 §12 一处词面，无功能/范围变更 |
 | 2026-09-22 | 同步 §4 版本锚定：uvicorn 上界 `>=0.34,<0.53` → `>=0.34,<0.54` | 依 ADR-006（2026-09-22，Lead 裁决）修订；SPEC 原值落后于 pyproject（依赖唯一真源，已为 `<0.54`） | 仅 §4 一处版本号，无功能/范围变更 |
+| 2026-10-21 | 补 `/roles` 页面与两个人设端点：§5 增 `PATCH/POST /roles/{role_id}/persona[/preview]`、`GET /roles` 响应注明含 `persona`、Schema 计数 14 → 22（实测 openapi 22 个）；§7 增「角色性格」页；§9 增 AC-27/28/29 | 上一提交交付了 `/roles` 与三个接口，SPEC 未同步；`tests/contract/verify_design_contract.py` 的 D3 因此报 2 条「契约写操作端点未在设计稿出现」 | §5 / §7 / §9 / §13 的文档口径；无代码与范围变更 |

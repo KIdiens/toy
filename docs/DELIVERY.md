@@ -23,7 +23,7 @@
 | 进程内 MCU 模拟器（复刻固件语义 + 故障注入 + 虚拟时钟 + 回放） | 已交付，`sim/` |
 | 确定性桩 AI 后端（零网络出口） | 已交付，`host/ai/stub_provider.py` |
 | 空音频后端（无设备可跑全链路） | 已交付，`host/audio/null_backend.py` |
-| 网页管理（5 页面 + 关键帧编排器） | 已交付，`host/web/` |
+| 网页管理（6 页面 + 关键帧编排器） | 已交付，`host/web/` |
 | 自动化测试（unit / contract / integration + 15 份黄金录制） | 已交付，`tests/`，955 passed |
 | 真实固件编译烧录 / 真板联调 | **未交付**（无 ESP32，C1/C5） |
 | 真实舵机运动 / 机械装配 | **未交付**（无舵机与结构件，C1/C2/C7/C8） |
@@ -121,7 +121,7 @@ toy/
 
 补充可达能力（本次交付实跑，见第 8 节）：
 - 统一响应信封 `{code, data, message}` 在成功/409/422/404 路径均生效；
-- 五个页面与 `/static/*` 资源可访问（HTTP 200）；
+- 六个页面与 `/static/*` 资源可访问（HTTP 200；`/roles` 为后续新增，§8 的探针记录仍是当时五页的实跑结果）；
 - `POST /api/v1/actions/play` 走通完整闭环：模拟器收到 `ARM` -> 206 帧 `FRAME` -> `SETTLED` -> `STOP`，动作结束回 `IDLE`；
 - 拔出公仔 -> 抢占式 `FAULT_LOCKED`（fault=`INTERLOCK`），人工确认后回 `IDLE` 且 `session_generation` 自增。
 
@@ -380,6 +380,8 @@ HTTP 200      2.6 ms     2190 B  /static/app.js
 HTTP 200      2.4 ms    11923 B  /static/styles.css
 HTTP 200      2.4 ms     4011 B  /static/index.html
 ```
+
+> 注：以上是当时实跑记录，字节数与条数保持原样（不篡改历史数据）；后续新增 `/roles`（第六页），当前共六页，`/roles` 的可达性由 `tests/integration/test_web_mount.py` 覆盖。
 
 `POST /api/v1/actions/play`（带 `request_id` + 预期 `role_id`）：
 
