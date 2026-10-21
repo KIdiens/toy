@@ -26,6 +26,7 @@ from host.ai.tools import ToolRegistry
 from host.core.errors import ToolValidationError
 
 PERSONA_DEFAULT = "你是桌面原创角色小星，热情、简洁、适合儿童交流，每次不超过 100 字。"
+DEFAULT_VOICE = "Cherry"
 SAFETY_CLAUSE = (
     "不知道就直说不知道，不编造。"
     "不索要住址、学校、密码等隐私。"
@@ -34,6 +35,8 @@ SAFETY_CLAUSE = (
 MAX_TOOL_ROUNDS = 2
 
 MemoryProvider = Callable[[], Sequence[str]]
+PersonaProvider = Callable[[], str]
+VoiceProvider = Callable[[], str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +63,10 @@ class AiRouter:
         registry: ToolRegistry,
         *,
         memory_provider: MemoryProvider | None = None,
-        persona: str = PERSONA_DEFAULT,
-        voice: str = "Cherry",
+        persona: str | None = None,
+        voice: str | None = None,
+        persona_provider: PersonaProvider | None = None,
+        voice_provider: VoiceProvider | None = None,
         logger=None,
     ) -> None:
         self.asr = asr
@@ -69,9 +74,23 @@ class AiRouter:
         self.tts = tts
         self.registry = registry
         self.memory_provider = memory_provider
-        self.persona = persona
-        self.voice = voice
+        # 静态值保留为默认与向后兼容入口；给了 provider 时每轮现取（换角色要立刻生效）。
+        self.persona = PERSONA_DEFAULT if persona is None else persona
+        self.voice = DEFAULT_VOICE if voice is None else voice
+        self.persona_provider = persona_provider
+        self.voice_provider = voice_provider
         self.logger = logger
+
+    # ---------- 人设 / 声部（每轮现取，支持随角色切换） ----------
+    def _current_persona(self) -> str:
+        if self.persona_provider is not None:
+            return self.persona_provider()
+        return self.persona
+
+    def _current_voice(self) -> str:
+        if self.voice_provider is not None:
+            return self.voice_provider()
+        return self.voice
 
     # ---------- 对外入口 ----------
     def respond_audio(self, wav: bytes, *, lang: str | None = None) -> AiResult:
@@ -98,7 +117,7 @@ class AiRouter:
 
     # ---------- 内部 ----------
     def _build_messages(self, user_text: str) -> list[Message]:
-        messages = [Message("system", f"{self.persona}{SAFETY_CLAUSE}")]
+        messages = [Message("system", f"{self._current_persona()}{SAFETY_CLAUSE}")]
         block = ""
         if self.memory_provider is not None:
             block = safety.wrap_untrusted_data(list(self.memory_provider()))
@@ -151,7 +170,7 @@ class AiRouter:
     ) -> AiResult:
         reviewed = safety.review_output(text)
         final_text = reviewed.text if not reviewed.ok else text
-        clip = self.tts.synthesize(final_text, self.voice, lang)
+        clip = self.tts.synthesize(final_text, self._current_voice(), lang)
         return AiResult(
             user_text=user_text,
             reply_text=final_text,

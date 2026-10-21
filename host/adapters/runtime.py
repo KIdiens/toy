@@ -12,7 +12,8 @@ from typing import Any
 
 from host.adapters.ports import AppContext
 from host.adapters.queues import CommandRouter
-from host.ai.router import AiRouter
+from host.ai.persona import compile_persona
+from host.ai.router import DEFAULT_VOICE, PERSONA_DEFAULT, AiRouter
 from host.ai.stub_provider import build_stub_triad
 from host.ai.tools import ToolRegistry
 from host.audio.catalog import ContentCatalog
@@ -38,8 +39,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SIM_PORT_TOKEN = "sim://"
 
 
-def _build_ai(settings, registry: ToolRegistry, memory_provider, logger) -> AiRouter:
-    """按 ``AI_PROVIDER`` 选真/桩；Qwen 失败一律回落桩（AC-17 无致命错误）。"""
+def _build_ai(settings, registry: ToolRegistry, memory_provider, logger, roles=None) -> AiRouter:
+    """按 ``AI_PROVIDER`` 选真/桩；Qwen 失败一律回落桩（AC-17 无致命错误）。
+
+    ``roles`` 用于把**人设与声部**接成 provider（每轮现取）：它们由当前角色决定，
+    构造时定死会导致「换了角色但声音/性格不变」——role.json 里的 ``tts_voice``
+    此前在生产代码里零读取，就是这条断线的表现。
+    ``roles`` 允许为 ``None``（旧调用点 / 单元测试只关心 provider 选择），此时回落默认串。
+    """
+
+    def current_persona() -> str:
+        cfg = roles.active() if roles is not None else None
+        return PERSONA_DEFAULT if cfg is None else compile_persona(cfg.name, cfg.persona)
+
+    def current_voice() -> str:
+        cfg = roles.active() if roles is not None else None
+        return DEFAULT_VOICE if cfg is None else cfg.tts_voice
+
     if settings.ai.is_stub:
         asr, llm, tts = build_stub_triad()
     else:
@@ -50,7 +66,16 @@ def _build_ai(settings, registry: ToolRegistry, memory_provider, logger) -> AiRo
         except Exception as exc:  # 缺 Key / 依赖 / 网络配置 → 落桩而非崩溃
             logger.warning("Qwen 提供方不可用，回落确定性桩后端: %s", exc)
             asr, llm, tts = build_stub_triad()
-    return AiRouter(asr, llm, tts, registry, memory_provider=memory_provider, logger=logger)
+    return AiRouter(
+        asr,
+        llm,
+        tts,
+        registry,
+        memory_provider=memory_provider,
+        persona_provider=current_persona,
+        voice_provider=current_voice,
+        logger=logger,
+    )
 
 
 def _make_sim(clock):
@@ -155,7 +180,7 @@ def build_context(
         _router=router_out,
     )
     context.router = _build_ai(
-        settings, registry, lambda: context.memory_context(context.ensure_profile()), log
+        settings, registry, lambda: context.memory_context(context.ensure_profile()), log, roles
     )
     context.boot()  # 上电序列：MCU 上电 → BOOT_OK → IDLE（装配的一部分，非业务逻辑）
     return context

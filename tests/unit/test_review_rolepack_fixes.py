@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from host.roles import rolepack
 from host.roles.registry import RoleRegistry
+from host.roles.schema import FACTORY_LIMITS
 
 VALID_ROLE = {
     "schema_version": 1,
@@ -40,10 +41,23 @@ def _zip(path: Path, entries: dict[str, str], *,
 
 
 def _write_role(directory: Path, *, role_id: int, config_version: str) -> None:
+    # 限位取该角色的出厂值：``VALID_ROLE`` 里写死的 1400–1600 只对 role1 合法，
+    # 复用到 role2/3 就是「放宽出厂机械限位」，会被 schema 按设计拒绝。
+    factory_min, factory_max = FACTORY_LIMITS[role_id]
     (directory / "actions").mkdir(parents=True, exist_ok=True)
     (directory / "role.json").write_text(
-        json.dumps({**VALID_ROLE, "role_id": role_id, "config_version": config_version},
-                   ensure_ascii=False), encoding="utf-8")
+        json.dumps(
+            {
+                **VALID_ROLE,
+                "role_id": role_id,
+                "config_version": config_version,
+                "min_us": factory_min,
+                "max_us": factory_max,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (directory / "actions" / "wave.json").write_text(json.dumps({"schema": 1}), encoding="utf-8")
 
 
