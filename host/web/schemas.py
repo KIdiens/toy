@@ -68,6 +68,28 @@ class SettingsPatch(BaseModel):
     content_rating_max: str | None = None
 
 
+class PersonaOut(BaseModel):
+    """人设的 **web 层镜像**（6 个字段与 ``PersonaConfig`` 一一对应）。
+
+    刻意不复用领域模型、也不在这里写任何值约束（长度、条数、``max_chars`` 范围）：
+    1. 分层习惯 —— web schema 是契约形状，领域模型的约束可以独立演化；
+    2. **功能性原因** —— 若在这里加约束，FastAPI 会在进入处理器**之前**返回 422，
+       ``POST /persona/preview`` 的「永远 200 + 内联错误」就失效了：UI 要拿的是
+       逐字段红字，不是弹窗。所以全部值校验都推迟到处理器里由 ``PersonaConfig``
+       做（唯一真源），两个端点共用同一份判定，不会出现「预览说行、保存说不行」。
+
+    代价（登记误伤面）：字段类型错的请求（如 ``max_chars: "abc"``）仍会被 FastAPI
+    在入口挡成 422 —— 那是「body 不是这个形状」，不是「内容非法」。
+    """
+
+    archetype: str = ""
+    tone: str = ""
+    speech_style: str = ""
+    catchphrases: list[str] = Field(default_factory=list)
+    avoid: list[str] = Field(default_factory=list)
+    max_chars: int = 100
+
+
 # ---------------------------------------------------------------- 响应模型
 class Fault(BaseModel):
     code: Literal["INTERLOCK", "TIMEOUT", "PWM_INIT", "SAFETY_TRIP", "PROVIDER", "STORAGE"]
@@ -100,6 +122,15 @@ class RoleSummary(BaseModel):
     config_version: str
     tts_voice: str = ""
     language: str = "Auto"
+    # ``None`` = 该角色没填人设（旧角色包）。不能用空对象表达「没填」：
+    # 空对象会被编译成逐字段跳过的残句，两者语义不同。
+    persona: PersonaOut | None = None
+
+
+class PersonaSaveResult(BaseModel):
+    role_id: int
+    persona: PersonaOut | None = None
+    persona_preview: str
 
 
 class ValidateError(BaseModel):
@@ -110,6 +141,14 @@ class ValidateError(BaseModel):
 class ValidateResult(BaseModel):
     valid: bool
     errors: list[ValidateError] = Field(default_factory=list)
+
+
+class PersonaPreviewResult(BaseModel):
+    """预览结果：**永远 200**，非法内容走 ``errors`` 内联返回（UI 不弹窗）。"""
+
+    valid: bool
+    errors: list[ValidateError] = Field(default_factory=list)
+    compiled: str | None = None
 
 
 class PlayResult(BaseModel):

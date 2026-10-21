@@ -100,6 +100,82 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Envelope' }
 
+  /roles/{role_id}/persona:
+    patch:
+      tags: [roles]
+      summary: 保存该角色的人设（一键改性格）
+      operationId: saveRolePersona
+      description: >
+        只覆盖 role.json 的 persona 一个键，其他字段（限位、版本、动作白名单）原样保留；
+        原子写回并只重载这一个角色。**不推进 session_generation**：正在进行的这一轮回复
+        继续用旧人设说完，下一轮自然用新人设。6 个字段全空表示清空人设（写为 null）。
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 3 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonaOut' }
+      responses:
+        '200':
+          description: 已保存；返回落盘值与编译预览（不含安全条款）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PersonaSaveResult' }
+        '404':
+          description: role_id 未注册
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '422':
+          description: 内容非法（尖括号/换行/控制字符/超长/条数超限）；见 Envelope.message
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /roles/{role_id}/persona/preview:
+    post:
+      tags: [roles]
+      summary: 编译预览人设（不写盘，永远 200）
+      operationId: previewRolePersona
+      description: >
+        内容非法时仍返回 200，用 valid=false + errors[] 表达逐字段错误 —— UI 要的是
+        内联红字，不是 422 弹窗。404 只用于未知 role_id（资源不存在，不是内容问题）。
+      parameters:
+        - name: role_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 3 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PersonaOut' }
+      responses:
+        '200':
+          description: 预览结果（valid=false 时 compiled 为 null）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PersonaPreviewResult' }
+        '404':
+          description: role_id 未注册
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
   /actions/validate:
     post:
       tags: [actions]
@@ -496,6 +572,76 @@ components:
         config_version: { type: string }
         tts_voice: { type: string }
         language: { type: string, enum: [Auto, zh, en] }
+        persona:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PersonaOut'
+          description: 当前人设；null 表示该角色没填（编译时退回默认模板）
+
+    PersonaOut:
+      type: object
+      description: 结构化人设。所有字段可缺省；6 个字段全空且 max_chars=100 表示清空。
+      properties:
+        archetype:
+          type: string
+          maxLength: 40
+          description: 身份/原型（如「好奇的小孩」）
+        tone:
+          type: string
+          maxLength: 60
+        speech_style:
+          type: string
+          maxLength: 80
+        catchphrases:
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 20 }
+        avoid:
+          type: array
+          maxItems: 3
+          items: { type: string, maxLength: 20 }
+        max_chars:
+          type: integer
+          minimum: 20
+          maximum: 300
+          default: 100
+          description: 每次回复字数上限
+
+    PersonaSaveResult:
+      type: object
+      required: [role_id, persona_preview]
+      properties:
+        role_id: { type: integer }
+        persona:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/PersonaOut'
+          description: 落盘值（校验/归一化之后）；null 表示已清空
+        persona_preview:
+          type: string
+          description: compile_persona 的输出（不含安全条款）
+
+    PersonaError:
+      type: object
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          description: 字段路径（如 tone / catchphrases.0）
+        message: { type: string }
+
+    PersonaPreviewResult:
+      type: object
+      required: [valid]
+      properties:
+        valid: { type: boolean }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/PersonaError' }
+        compiled:
+          type: string
+          nullable: true
+          description: valid=false 时为 null
 
     ActionValidateRequest:
       type: object
