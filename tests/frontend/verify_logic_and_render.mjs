@@ -110,12 +110,48 @@ ck('waveform 确定性 + formatTime', () => {
   assert.equal(T.formatTime(62040), '01:02.040');
 });
 
+/* ---------------------------------------------------- ①b 人设预览渲染 */
+const P = await import('../../host/web/static/components/persona-preview.js');
+
+console.log('--- persona 预览渲染断言 ---');
+ck('compiled 里的用户内容一律 esc（不注入 DOM）', () => {
+  const html = P.previewMarkup({ status: 'ok', compiled: '你是小熊，<img src=x onerror=alert(1)>' });
+  assert.ok(!html.includes('<img'), '预览不得让 <img> 变成真实节点');
+  assert.ok(html.includes('&lt;img'), '应保留可见的转义文本');
+});
+ck('invalid 时逐字段列出错误且转义', () => {
+  const html = P.previewMarkup({
+    status: 'invalid',
+    errors: [{ path: 'catchphrases.0', message: '不允许包含尖括号 <' }],
+  });
+  assert.ok(html.includes('口头禅'), '错误要标明是哪个字段（人话标签）');
+  assert.ok(html.includes('data-preview-errors'));
+  assert.ok(!html.includes('尖括号 <'), '错误文案同样要转义');
+});
+ck('idle / loading / error 三态都有可读文案', () => {
+  assert.ok(P.previewMarkup({ status: 'idle' }).includes('改上面的字段'));
+  assert.ok(P.previewMarkup({ status: 'loading' }).includes('正在编译预览'));
+  assert.ok(P.previewMarkup({ status: 'error', message: '本机服务未连通' }).includes('本机服务未连通'));
+});
+ck('字段限位与后端一致（含 max_chars 默认值）', () => {
+  assert.deepEqual(
+    [P.LIMITS.archetype, P.LIMITS.tone, P.LIMITS.speech_style, P.LIMITS.phrase,
+      P.LIMITS.phrases, P.LIMITS.maxCharsMin, P.LIMITS.maxCharsMax, P.LIMITS.maxCharsDefault],
+    [40, 60, 80, 20, 3, 20, 300, 100],
+  );
+});
+ck('计数按码位、且忽略首尾空白', () => {
+  assert.equal(P.count('  abc  '), 3);
+  assert.equal(P.count(''), 0);
+  assert.equal(P.fieldLabel('max_chars'), '单次回复字数');
+});
+
 /* ---------------------------------------------------- ② 组件渲染冒烟 */
 console.log('--- 组件渲染冒烟（最小 DOM 桩） ---');
 const mods = [
   'chrome.js', 'status.js', 'axis.js', 'timeline-ui.js', 'editor-chrome.js',
   'editor-inspector.js', 'memories.js', 'reminders.js', 'settings-sections.js',
-  'settings-content.js', 'settings-danger.js',
+  'settings-content.js', 'settings-danger.js', 'role-list.js', 'persona-editor.js',
 ];
 const ATTRS = {
   state: 'fault', mode: 'offline', provider: 'stub', tone: 'danger', title: 't', subtitle: 's',

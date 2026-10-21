@@ -95,10 +95,11 @@ export function define(name, cls) {
   return cls;
 }
 
-/** 顶栏品牌名与导航结构（5 页共用，避免每页重复声明）。 */
+/** 顶栏品牌名与导航结构（各页共用，避免每页重复声明）。 */
 export const NAV = [
   { href: '/', label: '设备状态', icon: 'gauge', route: 'status' },
   { href: '/editor', label: '动作编排', icon: 'move-horizontal', route: 'editor' },
+  { href: '/roles', label: '角色', icon: 'user-round', route: 'roles' },
   { href: '/memories', label: '记忆', icon: 'brain', route: 'memories' },
   { href: '/reminders', label: '提醒', icon: 'bell', route: 'reminders' },
   { href: '/settings', label: '设置', icon: 'settings', route: 'settings' },

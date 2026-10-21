@@ -1,8 +1,8 @@
 """FastAPI 装配 + 静态挂载：**只装配，无业务逻辑**（architecture §2/§4）。
 
 - 挂载契约（前端已按此实现，必须对齐）：
-  ``/`` → ``static/index.html``；``/editor`` ``/memories`` ``/reminders`` ``/settings``
-  → 对应 HTML；``/static/*`` → ``host/web/static/``。
+  ``/`` → ``static/index.html``；``/editor`` ``/roles`` ``/memories`` ``/reminders``
+  ``/settings`` → 对应 HTML；``/static/*`` → ``host/web/static/``。
 - 错误映射：``ConflictError``→409、``ClarifyError``→422、``RecordNotFound``→404、
   其它 ``HostError``→500；响应一律为统一信封 ``{code,data,message}``。
 - ``dev_sim`` 路由**仅在 SIM 档位挂载**，生产不注册。
@@ -51,6 +51,7 @@ RETRY_AFTER_SECONDS = 1
 PAGE_ROUTES: dict[str, str] = {
     "/": "index.html",
     "/editor": "editor.html",
+    "/roles": "roles.html",
     "/memories": "memories.html",
     "/reminders": "reminders.html",
     "/settings": "settings.html",

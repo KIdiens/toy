@@ -10,6 +10,8 @@ import './components/axis.js';
 import './components/timeline-ui.js';
 import './components/editor-chrome.js';
 import './components/editor-inspector.js';
+import './components/role-list.js';
+import './components/persona-editor.js';
 import './components/memories.js';
 import './components/reminders.js';
 import './components/settings-sections.js';
@@ -24,13 +26,15 @@ export { toast, initTheme };
 const PAGES = {
   status: () => import('./pages/status.js'),
   editor: () => import('./pages/editor.js'),
+  roles: () => import('./pages/roles.js'),
   memories: () => import('./pages/memories.js'),
   reminders: () => import('./pages/reminders.js'),
   settings: () => import('./pages/settings.js'),
 };
 
 export const THEME_BY_PAGE = {
-  status: 'light', editor: 'dark', memories: 'light', reminders: 'light', settings: 'light',
+  status: 'light', editor: 'dark', roles: 'light', memories: 'light', reminders: 'light',
+  settings: 'light',
 };
 
 export async function boot(page) {

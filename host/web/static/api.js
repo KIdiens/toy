@@ -121,6 +121,16 @@ export const listActionFiles = () => request('GET', '/actions/files');
 export const setActiveRole = (role_id) =>
   request('PATCH', '/roles/active', { body: { request_id: newRequestId(), role_id }, withRequestId: true });
 
+/* 人设（一键改性格）。注意请求体就是 PersonaOut 本体：**没有** request_id 字段
+ * （见 host/web/schemas.py 的 PersonaOut，openapi 的 requestBody 也只指向它），
+ * 审计用的追踪号走 X-Request-Id 头，不往 body 里塞多余键。 */
+export const savePersona = (role_id, persona) =>
+  request('PATCH', `/roles/${role_id}/persona`, { body: persona, withRequestId: true });
+
+/** 编译预览：后端**永远 200**，非法内容用 valid:false + errors 表达，不是异常。 */
+export const previewPersona = (role_id, persona) =>
+  request('POST', `/roles/${role_id}/persona/preview`, { body: persona, withRequestId: true });
+
 export const validateAction = (action) =>
   request('POST', '/actions/validate', { body: { request_id: newRequestId(), action }, withRequestId: true });
 

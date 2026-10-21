@@ -14,7 +14,7 @@ from tests.support import TOY_ROOT
 
 OPENAPI_PATH = TOY_ROOT / "docs" / "api" / "openapi.yaml"
 PATH_LINE = re.compile(r"^ {2}(/[^:\s]+):\s*$")
-PAGES = ("/", "/editor", "/memories", "/reminders", "/settings")
+PAGES = ("/", "/editor", "/roles", "/memories", "/reminders", "/settings")
 
 
 def _context(tmp_path: Path, *, simulate: bool):
@@ -56,6 +56,21 @@ def _openapi_paths() -> set[str]:
 
 
 # ------------------------------------------------------------------ 挂载
+def test_roles_page_is_html_and_hosts_persona_editor(prod_client: TestClient) -> None:
+    """``/roles`` 是**页面**（不是 API）：必须回 HTML，且带人设编辑器的落脚点。
+
+    为什么单独钉一条：``/api/v1/roles`` 与 ``/roles`` 只差前缀，装配时最容易把
+    页面路由和 API 路由接错位（页面 404 或 API 被页面处理器抢走）。这里断言
+    content-type 与关键自定义元素，装配错了就会红。
+    """
+    response = prod_client.get("/roles")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    html = response.text
+    for marker in ("role-picker", "persona-editor", "人设", "编译预览", "恢复默认人设"):
+        assert marker in html, f"/roles 页面缺少 {marker}"
+
+
 def test_pages_and_static_are_served(prod_client: TestClient) -> None:
     for page in PAGES:
         response = prod_client.get(page)

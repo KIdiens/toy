@@ -2,7 +2,7 @@
 
 1) 用 threading HTTP server 复刻后端**静态挂载契约**：
      /            -> static/index.html（设备状态）
-     /editor /memories /reminders /settings -> 对应 HTML
+     /editor /roles /memories /reminders /settings -> 对应 HTML
      /static/*    -> host/web/static
      /design/*    -> host/web/design
      /api/v1/*    -> 503 信封（模拟"后端未启动"，验证离线降级）
@@ -68,8 +68,9 @@ if CHROME is None:  # 兜底到 PATH，避免"装了 Chrome 但因路径不同�
         or shutil.which("microsoft-edge")
     )
 
-ROUTES = {"/": "index.html", "/editor": "editor.html", "/memories": "memories.html",
-          "/reminders": "reminders.html", "/settings": "settings.html"}
+ROUTES = {"/": "index.html", "/editor": "editor.html", "/roles": "roles.html",
+          "/memories": "memories.html", "/reminders": "reminders.html",
+          "/settings": "settings.html"}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -141,6 +142,8 @@ MARKERS = {
                     "关键帧属性", "校验结果"],
     "memories.html": ["记忆管理", "不保存原始录音", "清空全部记忆", "role=\"list\"",
                       "还什么都没记住" if False else "记忆列表"],
+    "roles.html": ["角色性格", "选择角色", "编译预览", "persona-editor",
+                   "这段文字会作为角色设定发给模型", "保存人设", "恢复默认人设"],
     "reminders.html": ["提醒管理", "新建提醒", "提醒时间", "重复", "仅一次"],
     "settings.html": ["音量", "儿童模式", "内容审核", "危险区", "SSID"],
 }
@@ -151,6 +154,8 @@ RUNTIME = {
     "memories.html": (r'共 0 条记忆|共 \d+ 条记忆', "记忆计数已写入"),
     "reminders.html": (r'共 0 条提醒|共 \d+ 条提醒', "提醒计数已写入"),
     "settings.html": (r'id="offline-hint"', "离线提示位存在"),
+    # 离线分支：角色列表取不到时必须显式说明（不是空白、也不是永远转圈）
+    "roles.html": (r'没有读到角色列表', "角色控制器已跑完并渲染离线态"),
 }
 
 

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>角色性格 · 玩具主机</title>
+  <meta name="description" content="一键改角色性格：选角色、改人设、看编译预览、保存。安全规则始终由主机追加，人设不可覆盖。">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <app-topbar active="roles">
+    <conn-state-chip id="conn" state="offline"></conn-state-chip>
+  </app-topbar>
+
+  <main class="read" id="main">
+    <page-header icon="user-round" title="角色性格"
+      subtitle="选一个角色，改它的身份、语气、说话方式、口头禅与忌讳；右边的预览就是实际会发给模型的文字。">
+    </page-header>
+
+    <privacy-note tone="info">人设只影响「怎么说话」。安全规则、动作联锁与内容审核始终由主机追加，
+      <strong>不能被这里填的内容覆盖或取消</strong>。</privacy-note>
+
+    <section class="section" aria-labelledby="h-roles" style="margin-top: var(--space-6)">
+      <div class="section__head">
+        <div>
+          <h2 class="section__title" id="h-roles">选择角色</h2>
+          <p class="section__hint">三个公仔各自一份人设；标着「当前激活」的是设备上正在用的那个。</p>
+        </div>
+      </div>
+      <role-picker id="role-list" busy="true"></role-picker>
+    </section>
+
+    <section class="section" aria-labelledby="h-persona">
+      <div class="section__head">
+        <div>
+          <h2 class="section__title" id="h-persona">人设</h2>
+          <p class="section__hint">留空即「不限制这一项」；所有字段都留空并保存，等于恢复默认人设。</p>
+        </div>
+      </div>
+      <div class="card">
+        <persona-editor id="editor"></persona-editor>
+      </div>
+    </section>
+
+    <footer class="section xs meta">
+      <hr class="hr">
+      <p>保存不会打断正在进行的这一轮回复：它仍按旧人设说完，下一轮才用新人设。</p>
+      <div class="rowflex">
+        <span>改动只在本机写盘，不上传云端；页面刷新后重新读取。</span>
+        <span class="grow"></span>
+        <button class="btn btn--ghost" type="button" id="retry">重新读取角色</button>
+      </div>
+    </footer>
+  </main>
+
+  <toast-stack></toast-stack>
+  <noscript><p style="padding: var(--space-6)">本界面需要 JavaScript。</p></noscript>
+  <script type="module">
+    import { boot } from '/static/app.js';
+    boot('roles');
+  </script>
+</body>
+</html>

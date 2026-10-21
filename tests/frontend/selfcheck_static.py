@@ -103,11 +103,13 @@ print("   离线包内图标数:", len(packed), "| 用但未打包:", sorted(use
 print("   打包但不在 fixture:", sorted(packed - fixture))
 
 print("\n=== 6) 结构自检：页面/契约端点覆盖 ===")
-for name in ["index.html", "editor.html", "memories.html", "reminders.html", "settings.html",
-             "api.js", "app.js", "timeline.js", "styles.css", "styles-editor.css"]:
+for name in ["index.html", "editor.html", "roles.html", "memories.html", "reminders.html",
+             "settings.html", "api.js", "app.js", "timeline.js", "styles.css",
+             "styles-editor.css"]:
     print(f"   {name}: {'OK' if os.path.isfile(os.path.join(STATIC, name)) else 'MISSING'}")
 api = read_text(os.path.join(STATIC, "api.js"))
-for ep in ["/status", "/roles", "/roles/active", "/actions/validate", "/actions/play",
+for ep in ["/status", "/roles", "/roles/active", "/persona", "/persona/preview",
+           "/actions/validate", "/actions/play",
            "/actions/stop", "/content/import", "/memories", "/reminders", "/settings",
            "/features", "/events"]:
     print(f"   api 覆盖 {ep}: {'OK' if ep in api else 'MISSING'}")

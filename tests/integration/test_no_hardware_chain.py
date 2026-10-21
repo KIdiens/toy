@@ -167,8 +167,8 @@ def test_full_no_hardware_chain(client: httpx.Client) -> None:
 
 
 def test_pages_and_static_are_mounted(client: httpx.Client) -> None:
-    """挂载契约：五个人工页面 + 静态资源都必须能取到（避免 404）。"""
-    for page in ("/", "/editor", "/memories", "/reminders", "/settings"):
+    """挂载契约：六个人工页面 + 静态资源都必须能取到（避免 404）。"""
+    for page in ("/", "/editor", "/roles", "/memories", "/reminders", "/settings"):
         response = client.get(page)
         assert response.status_code == 200, page
         assert response.headers["content-type"].startswith("text/html"), page
