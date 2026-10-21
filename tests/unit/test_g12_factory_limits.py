@@ -123,8 +123,13 @@ def test_unknown_role_id_fails_without_keyerror():
     assert "role_id" in message
 
 
-def test_shipped_role_packs_still_load_and_are_unmodified():
-    """三个现有角色包零改动加载；并守卫 ``role.json`` 的限位仍是出厂值（内容未被改）。"""
+def test_shipped_role_packs_keep_factory_limits_and_load():
+    """三个现有角色包加载正常；且 ``role.json`` 的限位**仍是出厂值**。
+
+    **为什么只钉限位、不钉「内容不许改」**：限位是机械事实，内容文件被改动
+    （例如给人设补一段 ``persona``）是正常的产品迭代。改前这条叫
+    ``..._are_unmodified``，名字比断言严——它其实只比限位，改个名字免得误导。
+    """
     limits = _factory_limits()
     paths = sorted((TOY_ROOT / "content" / "roles").glob("*/role.json"))
     assert len(paths) == 3
@@ -132,9 +137,42 @@ def test_shipped_role_packs_still_load_and_are_unmodified():
         data = json.loads(path.read_text(encoding="utf-8"))
         role_id = data["role_id"]
         assert (data["min_us"], data["max_us"]) == limits[role_id], (
-            f"{path} 的限位不是出厂值，说明内容文件被改动过"
+            f"{path} 的限位不是出厂值，说明内容文件把它放宽/收窄了"
         )
 
     registry = RoleRegistry(TOY_ROOT / "content" / "roles")
     loaded = registry.load_all()
     assert [c.role_id for c in loaded] == [1, 2, 3]
+
+
+def test_shipped_roles_have_distinct_personas():
+    """三个内置角色的人设必须**互不相同** —— 防止复制粘贴后忘改内容。
+
+    这是「DIY 性格」这条能力的最低保证：如果三个角色的人设一模一样，
+    那这个特性等于没做。
+
+    ⚠️ **必须用同一个名字去编译再比较**。第一版这里写的是
+    ``compile_persona(config.name, config.persona)`` 然后比三个结果——
+    那是假绿：编译结果里本来就有 role 的 ``name``，三个名字天然不同，
+    于是「role2 的人设整段复制成 role1 的」也能全绿通过
+    （实测：变异后 failures=0）。固定名字才能把「人设差异」和「名字差异」分开。
+    """
+    from host.ai.persona import compile_persona  # noqa: PLC0415
+
+    registry = RoleRegistry(TOY_ROOT / "content" / "roles")
+    configs = registry.load_all()
+    assert len(configs) == 3
+
+    # 前置：三个包必须都**真的声明了** persona，否则下面比的是三份空实现
+    for config in configs:
+        assert config.persona is not None, f"role{config.role_id} 没有 persona 段"
+
+    # 固定同一名字，剔除「名字不同」这个无关差异
+    signature = {cfg.role_id: compile_persona("同一个名字", cfg.persona) for cfg in configs}
+    assert len(set(signature.values())) == len(signature), (
+        f"三个人设编译出重复内容（已固定名字，排除了名字差异）：{signature}"
+    )
+
+    # 再加一条：name 仍然要出现在**用自己的名字**编译的结果里
+    for config in configs:
+        assert config.name in compile_persona(config.name, config.persona)

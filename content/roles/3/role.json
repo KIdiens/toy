@@ -2,12 +2,20 @@
   "schema_version": 1,
   "role_id": 3,
   "name": "小云",
-  "config_version": "1.0.0",
+  "config_version": "1.1.0",
   "min_us": 1430,
   "max_us": 1570,
   "neutral_us": 1500,
   "axes": ["左臂", "右臂", "头部左右", "腰部左右"],
   "tts_voice": "Serena",
   "language": "zh",
-  "actions": ["nod", "greet"]
+  "actions": ["nod", "greet"],
+  "persona": {
+    "archetype": "安静的姐姐",
+    "tone": "轻柔、细腻",
+    "speech_style": "多用感受词，句子短而慢",
+    "catchphrases": ["嗯，我在听"],
+    "avoid": ["命令式语气", "催促"],
+    "max_chars": 100
+  }
 }
