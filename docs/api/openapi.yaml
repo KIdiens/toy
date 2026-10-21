@@ -580,7 +580,11 @@ components:
 
     PersonaOut:
       type: object
-      description: 结构化人设。所有字段可缺省；6 个字段全空且 max_chars=100 表示清空。
+      description: >
+        结构化人设。所有字段可缺省；6 个字段全空且 max_chars=100 表示清空（写为 null）。
+        下面的长度/条数/范围是**领域限位**：保存端点越界即 422；预览端点刻意**容忍**
+        越界并回 valid=false + errors（UI 要内联红字），所以客户端不要据这些约束在本地
+        拦截预览请求，否则预览的错误提示永远不会出现。
       properties:
         archetype:
           type: string
