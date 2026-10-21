@@ -146,6 +146,68 @@ ck('计数按码位、且忽略首尾空白', () => {
   assert.equal(P.fieldLabel('max_chars'), '单次回复字数');
 });
 
+/* ---------------------------------------------------- ①c 人设脏检查 */
+const D = await import('../../host/web/static/components/persona-dirty.js');
+
+console.log('--- persona 脏检查断言 ---');
+ck('规范化：去首尾空白、忽略空条、max_chars 转数字', () => {
+  assert.deepEqual(
+    D.normalizePersona({
+      archetype: '  好奇的小孩  ', tone: '', speech_style: ' 短句 ',
+      catchphrases: ['', '  ', ' 让我想想 ', '让我想想'], avoid: ['别说教'],
+      max_chars: '120',
+    }),
+    {
+      archetype: '好奇的小孩', tone: '', speech_style: '短句',
+      catchphrases: ['让我想想', '让我想想'], avoid: ['别说教'], max_chars: 120,
+    },
+  );
+});
+ck('「点进输入框再点走」不算脏：仅空白差异 / 仅空行差异 / "100" vs 100', () => {
+  const saved = { archetype: '好奇的小孩', tone: '温和', speech_style: '', catchphrases: ['让我想想'], avoid: [], max_chars: 100 };
+  assert.equal(D.samePersona(saved, { ...saved, archetype: '好奇的小孩  ' }), true);
+  assert.equal(D.samePersona(saved, { ...saved, catchphrases: ['让我想想', '', '  '] }), true);
+  assert.equal(D.samePersona(saved, { ...saved, max_chars: '100' }), true);
+  assert.equal(D.samePersona(saved, { ...saved, max_chars: 100.0 }), true);
+});
+ck('真改动一律判脏（含条目顺序/条数/字数上限）', () => {
+  const saved = { archetype: '好奇的小孩', tone: '温和', speech_style: '', catchphrases: ['让我想想'], avoid: [], max_chars: 100 };
+  assert.equal(D.samePersona(saved, { ...saved, archetype: '好奇的小孩！' }), false);
+  assert.equal(D.samePersona(saved, { ...saved, catchphrases: ['让我想想', '再等等'] }), false);
+  assert.equal(D.samePersona(saved, { ...saved, max_chars: 120 }), false);
+  // 条目拼接必须无歧义：['ab','c'] 与 ['a','bc'] 不是同一份人设
+  assert.equal(D.samePersona({ catchphrases: ['ab', 'c'] }, { catchphrases: ['a', 'bc'] }), false);
+});
+ck('persona=null 的空表单不算脏；改一个字就必须算脏', () => {
+  const t = new D.DirtyTracker();
+  t.mark(null);
+  const empty = { archetype: '', tone: '', speech_style: '', catchphrases: [], avoid: [], max_chars: 100 };
+  assert.equal(t.isDirty(empty), false, '空表单（persona null）不应算脏');
+  assert.equal(t.isDirty({ ...empty, archetype: '自定义' }), true,
+    '脏检查恒返回 false 的实现会在这里失败（本条就是判别力锚点）');
+});
+ck('保存后用落盘值重置快照 => 不再算脏', () => {
+  const t = new D.DirtyTracker();
+  const saved = { archetype: 'a', tone: 'b', speech_style: '', catchphrases: [], avoid: [], max_chars: 100 };
+  t.mark(saved);
+  assert.equal(t.isDirty({ ...saved, tone: 'c' }), true);
+  t.mark({ ...saved, tone: 'c' }); // 控制器在保存成功后会 load() 回填落盘值
+  assert.equal(t.isDirty({ ...saved, tone: 'c' }), false);
+});
+ck('只有「换到另一个角色」且已脏才需要确认（表驱动）', () => {
+  const cases = [
+    [null, 1, true, false],   // 还没有当前角色（首屏装载）：不拦
+    [1, '1', true, false],    // 点自己那张卡：不是切换
+    [1, 2, false, false],     // 没改：直接切
+    [1, 2, true, true],       // 改了 + 换人：必须确认
+    ['1', 2, true, true],     // 类型不同也要按同一个角色比较
+  ];
+  cases.forEach(([cur, next, dirty, expect]) => {
+    assert.equal(D.needsSwitchConfirm(cur, next, dirty), expect,
+      `currentId=${cur} next=${next} dirty=${dirty}`);
+  });
+});
+
 /* ---------------------------------------------------- ② 组件渲染冒烟 */
 console.log('--- 组件渲染冒烟（最小 DOM 桩） ---');
 const mods = [

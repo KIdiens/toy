@@ -10,10 +10,13 @@
  * ==========================================================================*/
 import { Base, define, ic, esc, emit } from './base.js';
 import { LIMITS, FIELD_LABELS, count, previewMarkup } from './persona-preview.js';
-import { TEXT_FIELDS, textField, phraseField } from './persona-fields.js';
+import { TEXT_FIELDS, textField, phraseField, phraseRow } from './persona-fields.js';
+import { DirtyTracker } from './persona-dirty.js';
 
 class PersonaEditor extends Base {
-  constructor() { super(); this.role = null; this._serverErrors = {}; }
+  // 注意：**不能**叫 this.role —— HTMLElement 自带 ARIA `role` 属性，
+  // 赋值会被转成字符串（"object Object"），后续按对象读 role.persona 全是 undefined。
+  constructor() { super(); this.currentRole = null; this._serverErrors = {}; this._dirty = new DirtyTracker(); }
 
   template() {
     return `<div class="stack">
@@ -80,7 +83,10 @@ class PersonaEditor extends Base {
     this.on('click', '[data-act="del-phrase"]', (_e, btn) =>
       this.delPhrase(btn.getAttribute('data-group'), Number(btn.getAttribute('data-idx'))));
     this.on('click', '[data-act="reset"]', () => {
-      this.load(this.role, null);
+      const role = this.currentRole;
+      this.load(role, null);
+      // 快照留在**已存值**上：清空字段是「未保存的修改」，切换角色前仍需确认。
+      this._dirty.mark(role ? role.persona : null);
       emit(this, 'persona-reset', {});
     });
   }
@@ -88,8 +94,9 @@ class PersonaEditor extends Base {
   /* ---------------------------------------------------------------- 回填 */
   /** 唯一的回填入口：persona 为 null/缺字段都按「未填」处理。 */
   load(role, persona) {
-    this.role = role || null;
+    this.currentRole = role || null;
     const p = persona || {};
+    this._dirty.mark(p); // 快照 = 磁盘上的值（含 persona 为 null 的空表单）
     this.clearErrors();
     this.clearFormError();
     this.setPreview({ status: 'idle' });
@@ -121,25 +128,12 @@ class PersonaEditor extends Base {
     if (!box) return;
     const items = values.slice(0, LIMITS.phrases);
     if (!items.length) items.push('');
-    box.innerHTML = items.map((v, i) => this._phraseRow(group, i, v)).join('');
+    box.innerHTML = items.map((v, i) => phraseRow(group, i, v)).join('');
     const add = this.$(`[data-act="add-phrase"][data-group="${group}"]`);
     // 按**行数**禁用，不按「有内容的条数」：否则 3 行里有空行时按钮仍可点，
     // 但 slice 会悄悄丢掉第 4 行 —— 正是「按钮点了没反应」那种假可用。
     if (add) add.disabled = items.length >= LIMITS.phrases;
     if (focusIdx >= 0) this.$(`[data-in="${group}"][data-idx="${focusIdx}"]`)?.focus();
-  }
-
-  _phraseRow(group, index, value) {
-    const id = `pf-${group}-${index}`;
-    return `<div class="phrase" data-phrase-row>
-      <label class="sr-only" for="${id}">${esc(FIELD_LABELS[group])} 第 ${index + 1} 条</label>
-      <input class="input" id="${id}" data-in="${group}" data-idx="${index}" type="text"
-        autocomplete="off" value="${esc(value)}">
-      <span class="counter" data-count="${group}.${index}" data-over="false">
-        <span data-len>0</span>/${LIMITS.phrase}</span>
-      <button class="btn btn--ghost" type="button" data-act="del-phrase" data-group="${group}"
-        data-idx="${index}" aria-label="删除第 ${index + 1} 条${esc(FIELD_LABELS[group])}">${ic('x', 16)}</button>
-    </div>`;
   }
 
   addPhrase(group) {
@@ -178,6 +172,9 @@ class PersonaEditor extends Base {
   }
 
   _val(name) { return String(this.$(`[data-in="${name}"]`)?.value ?? '').trim(); }
+
+  /** 是否与「磁盘上的值」不同（规范化比较见 persona-dirty.js：空白/空行不算改动）。 */
+  isDirty() { return this._dirty.isDirty(this.read()); }
 
   /* ---------------------------------------------------------------- 校验 */
   /** 本地限长：返回 false 时保存按钮已被真禁用（不是假按钮）。 */

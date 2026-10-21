@@ -10,6 +10,7 @@
 import * as api from '../api.js';
 import { toast } from '../components/chrome.js';
 import { connStateFromStatus } from '../components/status.js';
+import { needsSwitchConfirm } from '../components/persona-dirty.js';
 
 /** 防抖窗口：用户正常打字节奏约 150-250ms/键，300ms 既能跟上又不会每键一发。 */
 const PREVIEW_DEBOUNCE_MS = 300;
@@ -66,6 +67,58 @@ export default async function boot() {
     const role = find(currentId);
     editor.load(role, role ? role.persona || null : null);
     schedulePreview(true);
+  }
+
+  /* ------------------------------------------------ 脏检查 + 切换前确认 */
+  // 切换角色会把表单重填成另一个人的 persona，**已改的内容会没有提示地消失**。
+  // 所以脏的时候不直接切：先用项目现成的 inline-confirm 问一句。
+  let guardBox = null;
+  let guardFor = null;
+
+  /** 确认条挂在角色卡下方；页面没留锚点时按同一位置补一个，绝不「没容器就直接切」。 */
+  function ensureGuardBox() {
+    if (guardBox && guardBox.isConnected) return guardBox;
+    guardBox = document.querySelector('#switch-guard');
+    if (!guardBox) {
+      guardBox = document.createElement('div');
+      guardBox.id = 'switch-guard';
+      picker.after(guardBox);
+    }
+    return guardBox;
+  }
+
+  function closeGuard() {
+    if (!guardBox) return;
+    guardBox.replaceChildren();
+    guardBox.hidden = true;
+    guardFor = null;
+  }
+
+  function askSwitch(nextId) {
+    if (guardFor === nextId) return;
+    closeGuard();
+    guardFor = nextId;
+    const el = document.createElement('inline-confirm');
+    el.setAttribute('label', '切换会丢弃当前未保存的修改');
+    el.addEventListener('confirm', () => { closeGuard(); select(nextId); });
+    el.addEventListener('cancel', () => {
+      closeGuard();
+      toast('info', '已取消切换，当前修改仍在');
+    });
+    ensureGuardBox().replaceChildren(el);
+    guardBox.hidden = false;
+    el.querySelector('[data-act="yes"]')?.focus();
+  }
+
+  function requestSelect(id) {
+    const next = Number(id);
+    if (currentId !== null && String(currentId) === String(next)) {
+      closeGuard(); // 点的是当前这张卡：不是切换，保留已改的内容
+      return;
+    }
+    if (needsSwitchConfirm(currentId, next, editor.isDirty())) { askSwitch(next); return; }
+    closeGuard();
+    select(next);
   }
 
   /* ------------------------------------------------------------- 保存 */
@@ -140,7 +193,7 @@ export default async function boot() {
   }
 
   /* ------------------------------------------------------------- 事件 */
-  picker.addEventListener('role-select', (e) => select(e.detail.role_id));
+  picker.addEventListener('role-select', (e) => requestSelect(e.detail.role_id));
   editor.addEventListener('persona-change', () => schedulePreview());
   editor.addEventListener('persona-reset', () => {
     schedulePreview(true);

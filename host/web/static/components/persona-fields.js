@@ -6,7 +6,7 @@
  * 组件只按这两个约定写 DOM，不做选择器推导。
  * ==========================================================================*/
 import { ic, esc } from './base.js';
-import { LIMITS } from './persona-preview.js';
+import { LIMITS, FIELD_LABELS } from './persona-preview.js';
 
 /** [字段名, 标签, 说明, 上限, 是否多行] —— 顺序即成串顺序 */
 export const TEXT_FIELDS = [
@@ -44,4 +44,18 @@ export function phraseField(name, label, hint) {
     <p class="field__helper">${esc(hint)}</p>
     <p class="field__error hidden" data-err="${name}" role="alert"></p>
   </div>`;
+}
+
+/** 单条口头禅/忌讳的输入行；计数位与删除位由组件按约定选择器更新。 */
+export function phraseRow(group, index, value) {
+  const id = `pf-${group}-${index}`;
+  return `<div class="phrase" data-phrase-row>
+      <label class="sr-only" for="${id}">${esc(FIELD_LABELS[group])} 第 ${index + 1} 条</label>
+      <input class="input" id="${id}" data-in="${group}" data-idx="${index}" type="text"
+        autocomplete="off" value="${esc(value)}">
+      <span class="counter" data-count="${group}.${index}" data-over="false">
+        <span data-len>0</span>/${LIMITS.phrase}</span>
+      <button class="btn btn--ghost" type="button" data-act="del-phrase" data-group="${group}"
+        data-idx="${index}" aria-label="删除第 ${index + 1} 条${esc(FIELD_LABELS[group])}">${ic('x', 16)}</button>
+    </div>`;
 }
