@@ -29,7 +29,7 @@ export default async function boot() {
     conn.setAttribute('state', state);
     // hidden 的开关必须自成对：只在「已连上且无故障」时隐藏。
     // 缺 remove 分支时，页面一旦成功连过一次，后续任何故障都只会 setAttribute(mode)
-    // 而横幅仍带 hidden —— 故障提示永久不可见（实测在线→故障转换必现）。
+    // 而横幅仍带 hidden —— 故障提示永久不可见（实测「在线转故障」必现）。
     if (!status) banner.setAttribute('mode', 'offline');
     else if (status.fault || status.state === 'FAULT_LOCKED') banner.setAttribute('mode', 'fault');
     else { banner.classList.add('hidden'); return; }
@@ -82,7 +82,7 @@ export default async function boot() {
     try { status = await api.getStatus(); } catch (e) { if (api.isOffline(e) || e.name === 'ApiError') status = null; }
     try { roles = await api.listRoles() || []; } catch { roles = []; }
     try { renderStub(await api.listFeatures()); } catch { renderStub(null); }
-    // 横幅显隐由 renderConn 独占决定（online→fault 也必须能再显示出来）。
+    // 横幅显隐由 renderConn 独占决定（online 转 fault 也必须能再显示出来）。
     renderConn(); renderRole(); renderInterlock(); renderFault(); renderMeta();
   }
 
