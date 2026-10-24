@@ -192,7 +192,9 @@ toy/
 | sched | 提醒/待机小动作定时器 | `queue.get(timeout=1s)` | 触发→事件 |
 
 - **判定「非阻塞」的可测方式**：在 net 线程注入一个 10s 的假请求，断言 serial 线程在 <100ms 内仍能收发一行、core 仍能处理按键事件（integration 测试 `test_network_does_not_block_serial`）。
-- 线程与队列数量固定、无动态起线程；关停走统一 `EventKind.SHUTDOWN` + `join(timeout)`。
+- 线程与队列数量固定。入口从领域线程启动起统一进入收尾范围，半启动失败同样清理；线程先登记再启动，只对已启动线程执行 `join(timeout)`。
+- 当前运行时关停先设置停止信号与上下文 `_shutdown`、作废在途播放，再唤醒录放音并等待领域/运动线程，最后关闭总线、设备、队列和数据库。任一关闭步骤报错仍尝试其余步骤；更早的启动或服务异常优先保留。
+- 工作线程在自身 `finally` 中关闭线程局部 SQLite 连接，维持 `check_same_thread=True`。超时仍保留线程引用并返回运行时错误，暂缓数据库总清理，待线程退出后可再次关闭；不能强制终止阻塞的云请求。`main.py` 的退出码与收尾辅助函数分别放在 `host/startup.py`、`host/lifecycle.py`，上下文清理位于 `host/adapters/shutdown.py`。
 
 ## 7. 状态机与串口协议规格
 
@@ -209,9 +211,11 @@ toy/
 | DIALOG_PRESS | THINKING | IDLE | 取消本轮，generation+1 | |
 | REC_STOP | RECORDING | THINKING | 录音结束 | |
 | REC_CANCEL | RECORDING | IDLE | 删除临时录音 | |
-| AI_DONE | THINKING | SPEAKING | 输出审核通过 | 审核在出声前完成（§15） |
+| AI_DONE | THINKING | SPEAKING | 已审核回复或已替换的固定安全拒绝 | 审核在出声前完成（§15），拒绝不执行播放计划 |
 | AI_FAIL | THINKING | IDLE | 本地错误提示 | 不锁死按钮（§10.5） |
+| AUDIO_FAIL | RECORDING / THINKING / SPEAKING | IDLE | 当前轮次、阶段与操作身份匹配 | 录音失败只结束录音/等待结果阶段；播放失败只结束说话阶段，保留错误日志，不记作播放成功 |
 | PLAY_DONE | SPEAKING | IDLE | | |
+| LOCAL_PLAY | IDLE | SPEAKING | 已准备并校验的本地音频快照 | 内部调度，不录音、不触发 NET_REQUEST |
 | PERFORM_PRESS | IDLE | PERFORMING | 动作白名单且联锁通过 | |
 | PERFORM_PRESS | THINKING | PERFORMING | 取消本轮转本地表演 | |
 | PERFORM_DONE | PERFORMING | IDLE | | |
@@ -224,7 +228,17 @@ toy/
 - `SAFETY_TRIP` 是唯一允许从任意态抢占的迁移。
 - 每次进入 `IDLE`/角色切换：`session_generation += 1`。
 
+音频异常由 audio 线程回投 `AUDIO_FAIL`，核心按阶段和代数决定是否回到 `IDLE`。失败录音发布就绪标记及异常，唤醒等待线程；失败、空录音与已取消请求不进入 ASR。入队操作的身份与取消事件由适配层检查，旧错误不结束新操作，也不解除 `FAULT_LOCKED`。说话中换角色但保留当前播放时，适配层确认仍是当前操作后，用当前代数上报它的失败，避免永久停在 `SPEAKING`。设备恢复后允许用户重新按键发起新一轮，不在后台自动重复录音。
+
+AI 播放工具先准备会话内快照，安全回复正常结束后再按请求顺序执行。`ToolPerformer` 包装默认事件派发，任务之间串行，不在核心读取文件或做网络请求。正常完成引起 IDLE 代数递增时，在同一次派发内继承剩余计划；取消、换角色、配置变化、故障和音频失败丢弃余下任务，旧音频失败不影响新计划。每轮上限、回执语义与验证见 [ADR-014](../decisions/ADR-014-deferred-media-tool-execution.md)。
+
+运动目标状态由 `MotionClient.on_progress` 在 FRAME 写入成功后同步发布，包含同一次时间轴采样的四轴目标、进度、实际线序号和写入时间。回调异常只记录一次并关闭本轮观察，不重发 ARM，也不改变既有取消与 STOP 收尾。`host/adapters/status.py` 在上下文锁内按播放令牌、代数、角色和配置版本生成快照，返回副本，1000ms 后目标失效。HTTP 与 WS 均携带可空 `target` 和当前角色的 `axis_limits`；页面校验归属及数值、处理 null、断线和接收后的到期清除。目标为指令提交状态，不能用来推断舵机位置、MCU 逐帧确认或硬实时延迟。
+
+传输关闭前，若最后发送的是 STOP，`SerialLink` 给既有 `OK STOP` 最多 100ms 的接收窗口，再释放端口。实际 TCP 回放曾在主机立即 shutdown 时发生连接重置，导致接收端丢失尾部 STOP；延迟回执单测与不同播放时点的 TCP 取消回归覆盖此问题。无回执或已断线时仍关闭并记未确认日志，不把写入成功当作 MCU 已确认，也不新增解锁或自动重试。
+
 ### 7.1.1 三按键 × 状态 行为矩阵（开发书 §5.2 落地；对应 PRD M13）
+
+
 
 三按键（对话=1、表演=2、音量=3）的**每一种状态行为都必须有单一归属**（PRD §5.2 M13 的验收是"逐格断言"）。落点规则：
 

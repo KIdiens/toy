@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from host.web import schemas
 from host.web.deps import ContextDep
@@ -19,7 +19,7 @@ router = APIRouter(tags=["actions"])
 
 @router.get("/actions/files")
 def list_action_files(ctx: ContextDep) -> dict[str, Any]:
-    """当前角色可编辑的动作文件（``active`` 为当前编辑指针）。"""
+    """当前角色动作文件；``active`` 为服务端指针，页面高亮以已加载来源为准。"""
     files = [schemas.ActionFile(**item).model_dump() for item in ctx.action_files()]
     return schemas.ok(files)
 
@@ -31,6 +31,13 @@ def validate_action(payload: schemas.ActionValidateRequest, ctx: ContextDep) -> 
     return schemas.ok(result.model_dump())
 
 
+@router.get("/actions/files/{action_id}")
+def get_action_document(action_id: str, ctx: ContextDep,
+                        role_id: int = Query(ge=1, le=3)) -> dict[str, Any]:
+    """读取预期角色的完整动作；不修改设备当前动作指针。"""
+    return schemas.ok(ctx.action_document(role_id=role_id, action_id=action_id))
+
+
 @router.post("/actions/play")
 def play_action(payload: schemas.ActionPlayRequest, ctx: ContextDep) -> dict[str, Any]:
     """当前角色匹配且安全检查通过才调度播放；冲突返回 409。"""
@@ -38,6 +45,7 @@ def play_action(payload: schemas.ActionPlayRequest, ctx: ContextDep) -> dict[str
         role_id=payload.role_id,
         action_id=payload.action_id,
         action_version=payload.action_version,
+        action=payload.action,
         replace_current=payload.replace_current,
     )
     return schemas.ok(schemas.PlayResult(**result).model_dump())

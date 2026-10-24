@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import logging
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
+from host.adapters.audio_control import AudioControl
 from host.adapters.ports import AppContext
 from host.adapters.queues import CommandRouter
+from host.adapters.tool_performer import ToolPerformer
 from host.ai.persona import compile_persona
 from host.ai.router import DEFAULT_VOICE, PERSONA_DEFAULT, AiRouter
 from host.ai.stub_provider import build_stub_triad
@@ -118,6 +121,31 @@ def build_context(
     logger: logging.Logger | None = None,
 ) -> AppContext:
     """装配一个可运行上下文。测试可注入 ``clock``/``sim``/``link``/``db``。"""
+    database = db if db is not None else Database(settings.storage.path)
+    if settings.audio.backend == "sd":
+        from host.audio.sd_backend import SoundDeviceBackend  # noqa: PLC0415
+
+        backend = SoundDeviceBackend(
+            sample_rate=settings.audio.sample_rate,
+            input_device=settings.audio.input_device,
+            output_device=settings.audio.output_device,
+        )
+    else:
+        backend = NullAudioBackend(sample_rate=settings.audio.sample_rate)
+    # 声卡自检或后续装配失败时，释放已创建资源，不能留下半启动状态。
+    with ExitStack() as cleanup:
+        cleanup.callback(database.close_all)
+        cleanup.callback(backend.close)
+        backend.open()
+        context = _assemble_context(
+            settings, simulate=simulate, clock=clock, db=database, backend=backend,
+            sim=sim, link=link, root=root, logger=logger,
+        )
+        cleanup.pop_all()  # 成功后由 AppContext.close 统一接管。
+        return context
+
+
+def _assemble_context(settings, *, simulate, clock, db, backend, sim, link, root, logger):
     base = Path(root) if root is not None else REPO_ROOT
     log = logger or logging.getLogger("host")
     clock = clock or RealClock()
@@ -125,11 +153,13 @@ def build_context(
     state_machine = SessionStateMachine(logger=log)
     bus = EventBus()
     # 一条队列拆成三路：motion 归 host-worker，net/audio 各有独立消费者线程（P0-1）。
-    router_out = CommandRouter()
+    audio_control = AudioControl()
+    router_out = CommandRouter(on_audio=audio_control.prepare)
     work: WorkQueue[Command] = router_out.motion
-    engine = Engine(bus, router_out, state_machine=state_machine, clock=clock, logger=log)
+    engine = Engine(bus, router_out, state_machine=state_machine, clock=clock, logger=log,
+                    dispatcher=lambda engine, event: performer.dispatch(engine, event))
 
-    database = db if db is not None else Database(settings.storage.path)
+    database = db
     database.initialize()
 
     roles = RoleRegistry(base / "content" / "roles", state_machine=state_machine, logger=log)
@@ -138,7 +168,6 @@ def build_context(
         roles.set_active(roles.list()[0].role_id, bump=False)
 
     catalog = ContentCatalog(base / "content" / "audio")
-    backend = NullAudioBackend()
     # 音量档位从持久化设置水合：否则「设置页保存的音量」与「启动后的实际音量」不一致，
     # 而物理音量键改档若不回写，重启即丢。取值非法时回落默认档，不抛。
     stored_level = settings_repo.get(database, "volume", default=None)
@@ -149,7 +178,6 @@ def build_context(
     registry = ToolRegistry()
     weather_tool.register(registry, weather_tool.StubWeatherClient())
     reminder_tool.register(registry, database, now_provider=clock.now_iso)
-    content_tool.register(registry, catalog=catalog, action_ids=lambda: roles.actions_for())
 
     motion_link, controller = _make_link(
         settings, simulate=simulate, clock=clock, sim=sim, link=link
@@ -177,8 +205,14 @@ def build_context(
         log=log,
         net_queue=router_out.net,
         audio_queue=router_out.audio,
+        audio_control=audio_control,
         _router=router_out,
     )
+    performer = ToolPerformer(context)
+    context.tool_performer = performer
+    content_tool.register(registry, catalog=catalog, action_ids=lambda: roles.actions_for(),
+                          play_content=performer.prepare_content,
+                          play_action=performer.prepare_action)
     context.router = _build_ai(
         settings, registry, lambda: context.memory_context(context.ensure_profile()), log, roles
     )

@@ -41,8 +41,16 @@ class MotionTimeout(HostError):
     """运动时序超时：ARM 确认窗口、状态回报、收尾总超时。命名避免遮蔽内建 TimeoutError。"""
 
 
+class MotionCancelled(HostError):
+    """当前动作因停止、替换或会话失效而取消；不代表硬件故障或播放完成。"""
+
+
 class ProviderError(HostError):
     """AI/网络提供方错误（含 401/403/404/429 分类）。"""
+
+
+class AiCancelled(HostError):
+    """当前对话已失效；停止后续提供方/工具调用，不计作工作线程故障。"""
 
 
 class ToolValidationError(HostError):
@@ -63,7 +71,9 @@ __all__ = [
     "InterlockError",
     "ProtocolError",
     "MotionTimeout",
+    "MotionCancelled",
     "ProviderError",
+    "AiCancelled",
     "ToolValidationError",
     "ConflictError",
     "ClarifyError",

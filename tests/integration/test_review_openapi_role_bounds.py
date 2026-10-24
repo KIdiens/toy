@@ -242,18 +242,22 @@ def test_response_models_in_code_really_have_no_bounds() -> None:
         )
 
 
-def test_status_role_id_zero_is_reachable_at_runtime() -> None:
-    """实测支撑：``role_id=0`` 真的能从接口返回（不只是读代码推断）。
+def test_status_role_id_zero_is_reachable_at_runtime(tmp_path) -> None:
+    """内容目录无角色时，真实接口保留 role_id=0，目标与限幅为空。"""
+    from fastapi.testclient import TestClient
+    from host.adapters.runtime import build_context
+    from host.config.settings import load_settings
+    from host.web.app import create_app
 
-    这条是第 2 节断言的**行为级判别力来源**：若哪天``ports.py:106``
-    改成不返回 0（例如改成可空字段），本条会红，提醒文档可以收紧了。
-    """
-    import inspect
-
-    from host.adapters import ports
-
-    source = inspect.getsource(ports)
-    assert "active_role_id or 0" in source, (
-        "ports.py 里Status.role_id 的 0 兜底被改了 —— "
-        "响应侧文档能否收紧需要重新评估"
-    )
+    context = build_context(load_settings({"DB_PATH": str(tmp_path / "toy.db")}),
+                            simulate=True, root=tmp_path)
+    try:
+        with TestClient(create_app(context)) as client:
+            response = client.get("/api/v1/status")
+            assert response.status_code == 200
+            data = response.json()["data"]
+            assert data["role_id"] == 0
+            assert data["target"] is None
+            assert data["axis_limits"] is None
+    finally:
+        context.close()

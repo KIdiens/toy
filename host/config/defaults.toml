@@ -13,6 +13,13 @@ boot_wait_s = 2.0
 # stub = 确定性桩后端（零网络出口）；qwen = 真实百炼 REST
 provider = "stub"
 
+[audio]
+# null 不接触声卡；sd 显式启用真实录放音。空设备名使用系统默认输入/输出。
+backend = "null"
+sample_rate = 16000
+input_device = ""
+output_device = ""
+
 [web]
 host = "127.0.0.1"
 port = 8000

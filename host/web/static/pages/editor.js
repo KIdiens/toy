@@ -8,6 +8,9 @@
  *   - 下发按钮携带预期 role_id，角色已变时被拒（AC-16）；离线时禁用并给原因。
  * ==========================================================================*/
 import * as api from '../api.js';
+import { createEditorDocuments } from './editor-document.js';
+import { bindEditorRails } from './editor-rails.js';
+import { bindEditorTransfers } from './editor-transfers.js';
 import { toast } from '../components/chrome.js';
 import { connStateFromStatus } from '../components/status.js';
 import {
@@ -25,16 +28,18 @@ export default async function boot() {
     validateList = q('#validate'), impDialog = q('#impdialog'), offlineBanner = q('#offline-banner'),
     packFile = q('#pack-file');
   const lanes = LANE_IDS.map((id) => q(id));
+  bindEditorRails(q);
 
   const S = {
     action: makeEmptyAction(1, 'blank'), selected: 1, playhead: 0,
     playing: false, looping: false, muted: [false, false, false, false], offset: 0,
-    roles: [], status: null, online: false, pendingPack: null, wave: waveform(7, 110),
+    roles: [], status: null, online: false, wave: waveform(7, 110),
+    sourceId: null, documentVersion: null, documentLimits: null, loading: false, sending: false,
     fileList: [],   // 真实动作文件来源；由 GET /actions/files 填充（绝不构造假文件名）
   };
 
   const duration = () => Math.max(1, S.action.frames[S.action.frames.length - 1]?.t_ms || 6000);
-  const limits = () => ({ min_us: US_MIN, max_us: US_MAX, neutral_us: US_NEUTRAL, max_speed_us_s: 300 });
+  const limits = () => S.documentLimits || ({ min_us: US_MIN, max_us: US_MAX, neutral_us: US_NEUTRAL, max_speed_us_s: 300 });
 
   /* ------------------------------------------------------------ 渲染 */
   function renderTimeline() {
@@ -67,25 +72,6 @@ export default async function boot() {
     }));
   }
 
-  /* 动作文件列表来自 GET /actions/files（后端只读端点，返回当前角色的真实文件名 +
-     active 指针）。取不到就显示空态并说明原因，绝不构造假文件名凑数。 */
-  function renderFiles() {
-    files.files = S.fileList || [];
-    files.setAttribute('empty-hint', S.fileList && S.fileList.length
-      ? '点击文件切换到对应动作；新建与导入仍在本地编辑，未写入磁盘。'
-      : (S.online
-        ? '本机服务未返回动作文件（该角色可能还没有 .json 动作）；可用下方「新建」「导入」在本地编辑。'
-        : '离线预演模式：未连接后端服务，动作文件列表不可用；可用下方「新建」「导入」在本地编辑。'));
-  }
-
-  async function loadActionFiles() {
-    try {
-      const list = await api.listActionFiles();
-      S.fileList = Array.isArray(list) ? list : [];
-    } catch { S.fileList = []; }
-    renderFiles();
-  }
-
   function renderRight(result) {
     const frames = S.action.frames;
     const i = clamp(S.selected, 0, frames.length - 1);
@@ -94,7 +80,7 @@ export default async function boot() {
     if (S.roles.length) {
       limitsPanel.removeAttribute('nodata');
       limitsPanel.axes = AXES.map((a) => ({
-        name: a.name, min_us: US_MIN, max_us: US_MAX, neutral_us: US_NEUTRAL, max_speed_us_s: 300,
+        name: a.name, ...limits(),
       }));
     } else {
       limitsPanel.setAttribute('nodata', 'true');
@@ -102,22 +88,28 @@ export default async function boot() {
     if (result) validateList.result = result;
   }
 
-  function renderAll(result) { renderTimeline(); renderLeft(); renderRight(result); }
+  function renderAll(result) { renderTimeline(); renderLeft(); renderRight(result); documents?.render(); }
 
   /* ------------------------------------------------------------ 校验（防抖 + 服务端优先） */
-  let vTimer = null;
+  let vTimer = null, vRevision = 0;
+  function updateGuard(valid) {
+    guard.setAttribute('disabled-reason', !S.online ? '未连接设备' :
+      S.loading ? '正在读取动作' : S.sending ? '正在提交动作' :
+        !S.documentVersion ? '未读取角色版本' : valid ? '' : '校验未通过');
+  }
   function revalidate() {
-    validateList.setAttribute('busy', 'true');
+    const revision = ++vRevision, snapshot = JSON.stringify(S.action);
+    validateList.setAttribute('busy', 'true'); updateGuard(false);
     clearTimeout(vTimer);
     vTimer = setTimeout(async () => {
-      const local = validateAction(S.action, limits());
-      validateList.setAttribute('busy', 'false');
-      validateList.result = local;
-      guard.setAttribute('disabled-reason', S.online ? (local.valid ? '' : '校验未通过') : '未连接设备');
-      try {
-        const server = await api.validateAction(S.action); // AC-23：只校验、不触发硬件
-        if (server && typeof server.valid === 'boolean') validateList.result = server;
-      } catch { /* 离线/失败：保留本地校验结果，不静默覆盖为“通过” */ }
+      let result = validateAction(JSON.parse(snapshot), limits());
+      if (S.online) {
+        try { result = await api.validateAction(JSON.parse(snapshot)); }
+        catch { result = { valid: false, errors: [{ path: 'action', message: '服务端校验未确认，请重试' }] }; }
+      }
+      if (revision !== vRevision || JSON.stringify(S.action) !== snapshot) return;
+      validateList.setAttribute('busy', 'false'); validateList.result = result;
+      updateGuard(result.valid);
     }, 220);
   }
 
@@ -176,21 +168,30 @@ export default async function boot() {
   async function requestPlay(mode) {
     if (mode === 'guide') { q('#guide')?.showModal(); return; }
     if (mode === 'preview') { if (S.playing) stopPreview(); else startPreview(); return; }
-    // mode === 'send'：附预期 role_id 与动作版本；409 不叠加，只提示
+    if (S.loading || S.sending || !S.online || !S.documentVersion) return;
+    const snapshot = structuredClone(S.action), version = S.documentVersion;
+    const actionId = S.sourceId || 'draft';
+    S.sending = true; updateGuard(false);
     try {
-      const r = await api.playAction({
-        role_id: S.action.role_id, action_id: S.action.name || 'blank',
-        action_version: String(S.roles.find((x) => x.role_id === S.action.role_id)?.config_version || ''),
-        replace_current: false,
-      });
-      toast('success', `已下发给设备（首个 FRAME seq=${r && r.seq != null ? r.seq : '—'}）`);
+      const verdict = await api.validateAction(snapshot);
+      if (!verdict.valid) throw new api.ClarifyError('动作校验未通过');
+      if (S.loading || actionId !== (S.sourceId || 'draft') ||
+          JSON.stringify(S.action) !== JSON.stringify(snapshot) || version !== S.documentVersion) {
+        toast('info', '校验期间动作已修改，请重新下发当前内容'); return;
+      }
+      await api.playAction({ role_id: snapshot.role_id, action_id: actionId,
+        action_version: version, action: snapshot, replace_current: false });
+      toast('success', '当前编辑动作已提交，等待设备执行；未写入磁盘。');
     } catch (e) {
       if (e instanceof api.ConflictError) toast('error', `${e.message}（未叠加时间轴，可选择显式替换）`);
       else if (e instanceof api.ClarifyError) toast('error', `请求需要澄清：${e.message}`);
       else if (api.isOffline(e)) toast('error', '未连接设备，无法下发；当前仅支持预演');
       else toast('error', e.message || '下发失败');
-    }
+    } finally { S.sending = false; revalidate(); }
   }
+
+  const documents = createEditorDocuments({ S, files, roleSel,
+    listFiles: () => api.listActionFiles(), stopPreview, render: renderAll, validate: revalidate });
 
   /* ------------------------------------------------------------ 事件绑定 */
   ruler.addEventListener('ruler-seek', (e) => { S.playhead = e.detail.ms; renderTimeline(); renderLeft(); });
@@ -224,40 +225,8 @@ export default async function boot() {
     const m = /frames\[(\d+)\]/.exec(e.detail.path || '');
     if (m) { S.selected = Number(m[1]); renderAll(); }
   });
-  files.addEventListener('file-new', () => { S.action = makeEmptyAction(S.action.role_id, 'blank'); S.selected = 1; S.playhead = 0; renderAll(); revalidate(); toast('info', '已新建空白动作：本地编辑中，未写入磁盘。'); });
-  files.addEventListener('file-open', (e) => {
-    if (e.detail.name && !e.detail.name.startsWith(S.action.name)) { S.action = { ...S.action, name: e.detail.name.replace('.json', '') }; renderAll(); }
-  });
   files.addEventListener('file-import', () => packFile?.click());
-  q('#import-btn')?.addEventListener('click', () => packFile?.click());
-  packFile?.addEventListener('change', () => {
-    const f = packFile.files && packFile.files[0];
-    if (!f) return;
-    S.pendingPack = f;
-    impDialog.manifest = { name: f.name, role_id: '—', config_version: '—', files: '—', pending: true };
-    impDialog.setAttribute('open', 'true');
-  });
-  impDialog.addEventListener('import-confirm', async () => {
-    if (!S.pendingPack) return;
-    try {
-      await api.importContent(S.pendingPack);
-      impDialog.manifest = { name: S.pendingPack.name, role_id: '—', config_version: '—', files: '—', rejected: [] };
-      toast('success', '资源包已导入并原子切换');
-      await loadRoles();
-    } catch (e) {
-      if (e instanceof api.ApiError && e.status === 400) {
-        impDialog.manifest = { name: S.pendingPack.name, rejected: [{ path: '(服务端拒绝)', reason: e.message || '校验未通过' }] };
-        toast('error', '导入失败，旧版本已保留');
-      } else toast('error', api.isOffline(e) ? '未连接设备服务，导入未生效' : (e.message || '导入失败'));
-    }
-  });
-  q('#export-btn')?.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(S.action, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `${S.action.name || 'blank'}.json`; a.click();
-    URL.revokeObjectURL(a.href);
-    toast('success', '已导出本地动作文件');
-  });
+  bindEditorTransfers({ packFile, impDialog, action: () => S.action, reloadRoles: async () => { await loadRoles(); await documents.refresh(true); } });
 
   /* ------------------------------------------------------------ 角色与连接 */
   async function loadRoles() {
@@ -267,29 +236,13 @@ export default async function boot() {
     if (S.roles.length) { roleSel.setAttribute('role-id', String(S.roles[0].role_id)); roleSel.setAttribute('config-version', S.roles[0].config_version || ''); }
     renderRight();
   }
-  roleSel.addEventListener('role-change', async (e) => {
-    const prev = S.action.role_id;
-    try {
-      await api.setActiveRole(e.detail.role_id);
-      S.action.role_id = e.detail.role_id;
-      roleSel.setAttribute('config-version', e.detail.config_version || '');
-      toast('success', `已切换到角色 ${e.detail.role_id}`);
-      await loadActionFiles();   // 动作文件按角色隔离，切换后必须重取
-    } catch (err) {
-      roleSel.setAttribute('role-id', String(prev));
-      if (err instanceof api.ConflictError) toast('error', `${err.message}（例如正在播放，已还原选择）`);
-      else if (api.isOffline(err)) toast('info', '离线：角色切换未提交到设备，界面保持本地选择');
-      else toast('error', err.message || '切换角色失败');
-    }
-  });
-
   async function loadStatus() {
     try { S.status = await api.getStatus(); S.online = true; }
     catch { S.status = null; S.online = false; }
     conn.setAttribute('state', S.online ? connStateFromStatus(S.status) : 'offline');
     guard.setAttribute('disabled-reason', S.online ? '' : '未连接设备');
     offlineBanner.classList.toggle('hidden', S.online);
-    if (S.online) await loadActionFiles(); else renderFiles();
+    if (S.online) await documents.connect(S.status.role_id); else documents.render();
     renderAll();
   }
   const events = api.openEvents({ onEvent(evt) {
@@ -298,7 +251,7 @@ export default async function boot() {
   offlineBanner.addEventListener('banner-retry', () => loadStatus());
   offlineBanner.addEventListener('banner-guide', () => q('#guide')?.showModal());
   q('#guide-close')?.addEventListener('click', () => q('#guide').close());
-  window.addEventListener('beforeunload', () => { events.close(); stopPreview(); });
+  window.addEventListener('pagehide', () => { events.close(); stopPreview(); });
 
   await loadRoles();
   await loadStatus();

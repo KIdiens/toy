@@ -10,9 +10,9 @@ class EditorShell extends Base {
   static slot = true;
   template() {
     return `<div class="editor">
-      <aside class="editor__rail editor__rail--left" data-left><span data-slot="left"></span></aside>
+      <aside id="editor-files-panel" class="editor__rail editor__rail--left" data-left><span data-slot="left"></span></aside>
       <section class="editor__center"><span data-slot="center"></span></section>
-      <aside class="editor__rail editor__rail--right" data-right><span data-slot="right"></span></aside>
+      <aside id="editor-inspector-panel" class="editor__rail editor__rail--right" data-right><span data-slot="right"></span></aside>
     </div>`;
   }
   toggleRail(which) {
@@ -44,13 +44,14 @@ class RoleSelect extends Base {
     const sel = this.$('[data-sel]');
     if (!sel) return;
     const cur = str(this, 'role-id');
+    sel.disabled = bool(this, 'disabled');
     const list = this._roles && this._roles.length ? this._roles
       : (cur ? [{ role_id: Number(cur), name: `角色 ${cur}`, config_version: str(this, 'config-version') }] : []);
     sel.innerHTML = list.length
       ? list.map((r) => `<option value="${r.role_id}" data-ver="${esc(r.config_version || '')}"
           ${String(r.role_id) === cur ? 'selected' : ''}>${esc(r.name || '角色 ' + r.role_id)}</option>`).join('')
       : `<option value="">未安装公仔</option>`;
-    const ver = this.$('[data-ver]');
+    const ver = this.$('span[data-ver]');
     if (ver) ver.textContent = list.find((r) => String(r.role_id) === cur)?.config_version || str(this, 'config-version') || '—';
   }
 }
@@ -117,7 +118,7 @@ class PlayGuardButton extends Base {
 define('play-guard-button', PlayGuardButton);
 
 class ActionFileList extends Base {
-  static observedAttributes = ['empty-hint'];
+  static observedAttributes = ['empty-hint', 'document-status'];
   /** @param {{name:string,active?:boolean}[]} v 真实动作文件列表（来自后端；无数据源时传空数组） */
   set files(v) { this._files = Array.isArray(v) ? v : []; if (this.isConnected) this.render(); }
   get files() { return this._files || []; }
@@ -133,6 +134,7 @@ class ActionFileList extends Base {
         <button class="btn btn--ghost" type="button" data-act="new" title="新建空白动作">${ic('plus', 18)}</button>
         <button class="btn btn--ghost" type="button" data-act="import" title="导入角色包">${ic('upload', 18)}</button>
       </div>
+      <p class="xs meta" role="status">${esc(str(this, 'document-status'))}</p>
       <div style="margin: 0 calc(var(--space-2) * -1)">${rows}</div></div>`;
   }
   mounted() {

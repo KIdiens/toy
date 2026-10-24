@@ -48,8 +48,8 @@
 ## 3. Typography（排版）
 
 - **字体栈**：`--font-display: Lexend` + `--font-body: Figtree` + `--font-mono: JetBrains Mono` + 中文回退 `Noto Sans SC`。
-- **字体加载（离线硬约束处理）**：**自托管 woff2 子集，不使用外链 `@import`**。设备无外网时外链会导致三款字体全部回退、µs 数值列失去对齐。`design-tokens.css` 已改为 `@font-face` 指向 `/assets/fonts/*.woff2`，并配"等宽优先"回退链（`SFMono-Regular / Consolas / Liberation Mono / Menlo / ui-monospace`），即使字体文件缺失，数值列也不失对齐。四款字体均 SIL OFL 1.1，允许自托管。
-- **降级行为（明确接受并标注）**：字体文件缺失时，显示字体回退至 `Noto Sans SC` / 系统中文字体栈，Sans 字重层级会略弱化；但 `font-variant-numeric: tabular-nums` 仍保证等宽数字列对齐。此为可接受降级，已在 `design-tokens.css` 注释与本文件同步标注。
+- **字体加载（2026-10-22 补齐）**：四种字体的 WOFF2 与各自 OFL 1.1 许可随包放在 `static/fonts/`，通过同源 `/static/fonts/` 加载，无外网字体请求。固定上游版本、源文件及产物哈希、实际保留码位见该目录的 `sources.json`；构建工具与用法见 `static/fonts/README.md`。
+- **降级行为（明确接受并标注）**：Noto Sans SC 按现有程序及内容中的中文和标点制作子集；未覆盖的动态输入或字体加载失败时仍回退至系统中文/等宽字体。数值列继续使用 `font-variant-numeric: tabular-nums`；不把本地字体子集表述为覆盖任意中文输入。
 - **选型理由**：Lexend/Figtree 均以"可读性优先"为目标且**不在反射拒绝列表**（避开 Inter / Space Grotesk / DM Sans / Plus Jakarta 等训练默认值）；JetBrains Mono 承担 µs / 时间码 / 关键帧坐标，用 `tabular-nums` 防数字跳动。
 - **字号阶梯（8 级）**：12 / 13 / 15 / 16 / 18 / 22 / 28 / 34 px。工具 UI 默认 15px，家长阅读正文 16px。
 - **字重**：400 正文 / 500 次标题与按钮 / 600 主标题。
@@ -171,6 +171,7 @@
 - **路由**：`/reminders`（浅色默认）
 - **信息层级**：列表（时间 → 内容 → 角色音色 → 状态 → 下次触发）→ 新建
 - **布局**：列表 + 右侧/抽屉内新建表单。
+- **窄容器列表**：表头与数据行共用列宽，超宽内容只在列表区域横向滚动；滚动区域可聚焦，键盘可到达行内取消及二次确认，不推动整页横向溢出。页头主按钮保持完整文字。
 - **新建表单（≤4 可见字段，控认知负荷）**：时间（time picker）+ 重复（每天 / 工作日 / 自定义，三选项） + 内容文本 + 角色音色。夜间静音规则自动遵守并以 helper text 说明。
 - **关键交互**：启用/暂停用 switch；删除二次确认；重叠提醒给出提示；跨日/断电恢复在列表标注"已恢复"。
 - **状态（5 态）**：Empty=引导"设第一个提醒，比如睡前故事"；Error=创建失败（时间冲突/非法）；Populated=列表 + 下次触发倒计时；Edge=提醒 >100 条虚拟滚动。

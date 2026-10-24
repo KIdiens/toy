@@ -4,9 +4,13 @@
 - ``Recording`` 是录制结果的统一形状；时长/削顶/有无语音由后端或 Recorder 计算。
 - 真实后端（``sd_backend``）与空后端（``null_backend``）实现同一协议；
   上层 ``Player``/``Recorder`` 只依赖本协议，不关心具体设备。
+- 支持操作取消的后端声明 ``supports_cancel=True``，并接收可选 ``cancel`` 事件；
+  不支持该扩展的已有测试后端仍可使用原来的五个方法。
 """
 from __future__ import annotations
 
+import io
+import wave
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -35,6 +39,23 @@ def subframes(pcm: bytes, channels: int = DEFAULT_CHANNELS) -> int:
     if channels <= 0:
         return 0
     return max(0, len(pcm) - (44 if pcm[:4] == b"RIFF" else 0)) // (2 * channels)
+
+
+def recording_wav(recording: Recording) -> bytes:
+    """ASR 入口统一使用 WAV；录音后端与 VAD 仍保留 16-bit PCM 契约。"""
+    if not recording.data or recording.data[:4] == b"RIFF":
+        return recording.data  # 文件夹具已带 WAV 头时不重复封装。
+    if recording.sample_rate <= 0 or recording.channels <= 0:
+        raise ValueError("录音采样率与声道数必须为正，不能封装为 WAV")
+    if len(recording.data) % (2 * recording.channels):
+        raise ValueError("16-bit PCM 录音包含不完整采样帧")
+    output = io.BytesIO()
+    with wave.open(output, "wb") as handle:
+        handle.setnchannels(recording.channels)
+        handle.setsampwidth(2)
+        handle.setframerate(recording.sample_rate)
+        handle.writeframes(recording.data)
+    return output.getvalue()
 
 
 @runtime_checkable

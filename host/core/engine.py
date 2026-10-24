@@ -73,6 +73,7 @@ STALE_SENSITIVE: frozenset[EventKind] = frozenset({
     EventKind.NET_RESULT,
     EventKind.AI_DONE,
     EventKind.AI_FAIL,
+    EventKind.AUDIO_FAIL,
     EventKind.REC_STOP,  # 上一轮录音的迟到收尾，不得把新一轮录音提前打断成 THINKING
 })
 
@@ -112,6 +113,11 @@ def default_dispatcher(engine: Engine, event: Event) -> list[Command]:
         return []
     if kind in STALE_SENSITIVE and event.generation != machine.generation:
         return []  # 换角色/取消后的迟到回包一律丢弃（AC-15）
+    if kind is EventKind.AUDIO_FAIL:
+        allowed = {"record": (State.RECORDING, State.THINKING), "play": (State.SPEAKING,)}
+        if machine.state not in allowed.get(event.payload.get("phase"), ()):
+            return []
+        return engine.apply(Trigger.AUDIO_FAIL, event.payload)
     trigger = EVENT_TRIGGERS.get(kind)
     if trigger is None:
         return []

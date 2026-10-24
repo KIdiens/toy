@@ -116,6 +116,8 @@ export const listReminders = (q) => request('GET', '/reminders', { query: q });
 export const getSettings = () => request('GET', '/settings');
 /** 当前角色可编辑的动作文件列表；`active` 标记当前编辑指针（只读端点，无 query 参数）。 */
 export const listActionFiles = () => request('GET', '/actions/files');
+export const getActionDocument = (role_id, action_id) =>
+  request('GET', `/actions/files/${encodeURIComponent(action_id)}`, { query: { role_id } });
 
 /* ------------------------------------------------------------------ 写操作 */
 export const setActiveRole = (role_id) =>
@@ -135,9 +137,9 @@ export const validateAction = (action) =>
   request('POST', '/actions/validate', { body: { request_id: newRequestId(), action }, withRequestId: true });
 
 /** 播放必须附预期 role_id 与动作版本；replace_current 默认 false => 正在播放时 409（AC-16/AC-24）。 */
-export const playAction = ({ role_id, action_id, action_version, replace_current = false }) =>
+export const playAction = ({ role_id, action_id, action_version, action, replace_current = false }) =>
   request('POST', '/actions/play', {
-    body: { request_id: newRequestId(), role_id, action_id, action_version, replace_current },
+    body: { request_id: newRequestId(), role_id, action_id, action_version, action, replace_current },
     withRequestId: true,
   });
 

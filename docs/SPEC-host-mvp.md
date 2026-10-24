@@ -85,7 +85,7 @@
 | 并发 | 领域线程 + 线程安全队列 + 单线程确定性核心 | 标准库 `threading`/`queue` | 串口线程与网络线程物理隔离；网络不得阻塞串口与按键 |
 | 串口抽象 | `MotionLink` Protocol + Serial/Sim/Replay 三实现 | `pyserial==3.5` | 模拟器以 TCP 暴露，`SerialLink` 用原生 `socket://` 连接，同一份代码对接真机与模拟器 |
 | 数据库 | 标准库 `sqlite3` 门面 + `user_version` 迁移 | 标准库（无依赖） | 开发书 §11 本就是裸 DDL，上 ORM 属过剩 |
-| 网页后端 | FastAPI + uvicorn（同源托管静态页） | `fastapi>=0.128,<0.129` / `uvicorn>=0.34,<0.54` | 自动产出 OpenAPI 契约；Pydantic 声明式落地 `request_id`/`expected role_id` |
+| 网页后端 | FastAPI + uvicorn + wsproto（同源托管静态页与实时事件流） | `fastapi>=0.128,<0.129` / `uvicorn>=0.34,<0.54` / `wsproto>=1.2,<2` | 自动产出 OpenAPI 契约；Pydantic 声明式校验；显式补全 WebSocket 协议 |
 | 前端 | 原生 ES 模块 + Web Components，**无 Node 构建** | 浏览器原生（无 npm） | Pi 上零 Node 工具链；静态文件与 API 同源 |
 | 音频 | sounddevice + soundfile + Null 后端可切换 | `sounddevice==0.5.6` / `soundfile>=0.13.1,<0.15` | 同一 PortAudio API 覆盖 Windows WASAPI 与 Pi ALSA；全局单实例、半双工 |
 | 图标库（P0 锁定） | **Lucide**，全项目唯一 | `lucide 1.x`（ISC） | 24px/2px 描边栅格一致；同时提供 vanilla 与 React 包 |
@@ -94,6 +94,8 @@
 | 测试 | pytest | `>=8.3` | 需覆盖现有 `unittest` 用例 |
 
 **架构铁律**：依赖只能向下；`web/` 路由禁止直读数据库；`host/core/` 禁止 import HTTP 对象；仓储禁止含业务规则；`host/main.py` 只装配、**<100 行**；单文件 **≤300 行**。
+
+启动收尾约束：领域线程和运动线程的创建、登记、启动及 Web 装配均在同一清理范围内；部分启动失败也要释放已装配资源。线程在 `start()` 前登记，尚未启动的线程不执行 `join()`。清理异常不得覆盖更早的启动、服务或进程中断异常，也不能跳过其他资源的清理。正常运行后的收尾环境错误返回退出码 3；编程错误保留原异常。工作线程退出时在所属线程关闭 SQLite 连接；上下文关闭先取消在途动作并等待工作线程，再执行数据库总清理。等待超时保留活线程引用、报告非零退出码，并暂缓数据库总清理，不宣称已终止阻塞的外部请求。
 
 ---
 
@@ -111,6 +113,8 @@ Base URL：`http://127.0.0.1:8000/api/v1`（默认仅绑回环；开放局域网
 | PATCH | `/roles/{role_id}/persona` | 覆盖该角色的人设（写盘前校验，越界/尖括号/换行即拒绝） | `PersonaOut` | `PersonaSaveResult` | 200 / 422 |
 | POST | `/roles/{role_id}/persona/preview` | 只编译人设、不写盘（内容问题用 `valid:false` 表达） | `PersonaOut` | `PersonaPreviewResult` | 200 |
 | POST | `/actions/validate` | **只校验，不移动硬件** | `ActionValidateRequest` | `ActionValidateResult` | 200 |
+| GET | `/actions/files` | 当前角色动作文件列表；`active` 是服务端指针建议 | — | `ActionFile[]` | 200 |
+| GET | `/actions/files/{action_id}?role_id=1` | 读取所选文件的完整文档、配置版本与限幅；只读且检查预期角色 | — | `ActionDocument` | 200 / 409 / 422 |
 | POST | `/actions/play` | 当前角色匹配且安全检查成功才播放 | `ActionPlayRequest` | `Envelope` | 200 / 409 |
 | POST | `/actions/stop` | 立即取消队列并通知 MCU | — | `Envelope` | 200 |
 | POST | `/content/import` | 限大小、路径与签名校验后导入 | multipart | `Envelope` | 201 / 400 |
@@ -125,10 +129,10 @@ Base URL：`http://127.0.0.1:8000/api/v1`（默认仅绑回环；开放局域网
 **契约约束（全部强制）**：
 1. 统一响应信封 `{code, data, message}`
 2. **每个写操作必须带 `request_id`**（人设两个端点例外：请求体就是 `PersonaOut` 本体，追踪号走 `X-Request-Id` 头，见 `openapi.yaml`）
-3. 播放请求必须附**预期 `role_id`** 与动作版本；第二个播放请求默认拒绝或显式替换，**绝不静默叠加两个时间轴**（返回 409）
+3. 播放请求必须附**预期 `role_id`**；编排器携带完整 `action` 快照时必须附当前角色配置版本，服务端复核版本、角色、脉宽、首末帧和速度后冻结入队，不写盘。省略 `action` 的原调用继续按白名单读取磁盘动作，版本可省略，提供时仍须匹配。第二个播放请求默认拒绝或显式替换，**绝不静默叠加两个时间轴**（返回 409）；非法替换须在停止旧动作前拒绝。
 4. `/status` 及任何端点**不得返回密钥**
 
-Schema 共 22 个：`Envelope`、`ErrorEnvelope`、`StorageBusy`、`Status`、`Fault`、`RoleSummary`、`PersonaOut`、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`、`ActionDoc`、`ActionFile`、`ActionValidateRequest`、`ActionValidateResult`、`ActionPlayRequest`、`ActionPlayResult`、`Features`、`Memory`、`Reminder`、`ReminderCreateRequest`、`Settings`、`SettingsPatch`。人设相关为 `PersonaOut`（6 字段，全空 + `max_chars=100` 视为清空）、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`。
+Schema 共 23 个：`Envelope`、`ErrorEnvelope`、`StorageBusy`、`Status`、`Fault`、`RoleSummary`、`PersonaOut`、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`、`ActionDoc`、`ActionDocument`、`ActionFile`、`ActionValidateRequest`、`ActionValidateResult`、`ActionPlayRequest`、`ActionPlayResult`、`Features`、`Memory`、`Reminder`、`ReminderCreateRequest`、`Settings`、`SettingsPatch`。人设相关为 `PersonaOut`（6 字段，全空 + `max_chars=100` 视为清空）、`PersonaSaveResult`、`PersonaError`、`PersonaPreviewResult`。
 
 ---
 
@@ -158,6 +162,10 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 | 提醒管理 | `/reminders` | 列表（时间/内容/角色音色/状态/下次触发）+ 新建表单（≤4 字段） | `/reminders`、`/reminders/{id}` | 浅色 |
 | 设置 | `/settings` | 音量语言 / 网络配网 / 儿童模式 / 内容审核 / 高级危险区 | `/settings`、`/content/import` | 浅色 |
 
+状态页四轴指令目标（2026-10-24）：MotionClient 成功写入 FRAME 后发布目标与线序号，HTTP `/status` 与 WebSocket `/events` 的 `target` 同源，`axis_limits` 取当前已加载角色配置。目标同时绑定播放令牌、会话代数、角色和配置版本；首次发帧前、停止、完成、故障、关停或归属不匹配时为空。服务端按实际写入后的单调时间计算 1000ms 有效期，页面收到后按剩余有效期清空，HTTP 等待耗时也计入；事件流断开立即清空，较旧 HTTP 回包不得覆盖新事件。这里没有逐帧 MCU ACK 或位置传感器，不表示实际角度，也不保证网络传输延迟上限。
+
+角色人设编辑的异步保存纪律（2026-10-22）：保存只提交点击时的值；等待期间的新输入、清空草稿和切换后重新打开的表单不得被旧响应覆盖。成功后以实际落盘值更新脏检查基线；仅原编辑视图且没有后续编辑时回填规范化值。字段错误仅显示在该次提交对应的原草稿上。同角色保存中忽略重复提交，不同角色的保存中状态分别维护。“恢复默认”仍为先清空本页、再保存，未保存时不修改角色文件。
+
 **界面硬约束**：
 - 数值区在无数据时显示 `—` 并加斜纹底，明确「无数据 ≠ 0」
 - 设备实时值严格标注为「**目标位置**」，**禁止**显示为「实际角度」（PWM 舵机无位置反馈）
@@ -165,6 +173,10 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 - 危险区永远置底独立分组；恢复出厂需输入 `RESET` + 5 秒冷却
 
 ---
+
+编排文档行为：文件选择必须读取真实关键帧，文件 ID 与动作中文显示名分开；当前文件高亮由本页实际加载来源决定。初次连接按设备当前角色加载默认文件，离线编辑恢复连接时保留草稿。预演、导出、校验和下发使用同一文档；下发是一次内存快照，不写回角色包，也不扩充 AI 工具白名单；AI 工具仍只接受已注册动作 ID，没有 action 快照参数。换文件、新建或换角色前，未导出的修改需确认放弃；迟到文件、校验响应和切换期间的新输入不能互相覆盖。实际离开页面后才关闭事件流，取消离开应保持连接。窄屏通过“角色与文件”“关键帧属性”按钮打开对应侧栏，提供关闭按钮和 Escape 返回。
+
+AI 播放工具行为：白名单动作和本地 PCM WAV 先在网络线程校验并准备，工具回执只表示等待安全回复结束，不能假称已经执行。最终回复审核通过后才交给核心串行派发；固定安全拒绝语音可以播放，但不携带动作或本地内容计划。每轮最多 8 项，重复非空 call_id 不重复执行，预算耗尽或任一参数被拒时丢弃本轮播放计划。STOP、取消、换角色、配置变化、安全或音频故障清掉剩余任务；ASR/LLM/工具/TTS 阶段边界检查会话，正常取消不计工作线程故障。详见 [ADR-014](decisions/ADR-014-deferred-media-tool-execution.md)。这不代表 M9 音画并行同步、真实音质或真实模型验收完成。
 
 ## 8. 设计 Token（锁定）
 
@@ -174,7 +186,7 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 |---|---|
 | **主色** | 浅色 `--accent: #0F766E`（石油青）／深色 `#14B8A6` |
 | **主题** | 浅色 = 管理页默认（家长阅读）；深色 = 编排器默认（长时间精调），`<html data-theme="dark">` 切换 |
-| **字体** | display `Lexend` / body `Figtree` / mono `JetBrains Mono` / 中文回退 `Noto Sans SC`；**本地 @font-face 自托管**，等宽优先回退链保证 µs 数值列对齐 |
+| **字体** | display `Lexend` / body `Figtree` / mono `JetBrains Mono` / 中文回退 `Noto Sans SC`；**本地 @font-face 自托管**，等宽优先回退链保证 µs 数值列对齐；中文为现有程序文字子集，未覆盖的动态输入保留系统回退 |
 | **图标库** | **Lucide 1.x（ISC）**，全项目唯一；尺寸阶梯 16 / 20 / 24px，16px 时描边降为 1.75 |
 | **间距 / 圆角** | 4px 网格（`--space-1..16`）／`--radius-sm 6px` / `-md 10px` / `-lg 14px` / `-pill` |
 | **动效** | 120 / 180 / 260ms，缓动 `cubic-bezier(0.2, 0, 0, 1)` |
@@ -214,12 +226,14 @@ SQLite，`PRAGMA foreign_keys=ON`，全部查询参数绑定，`user_version` �
 | AC-21 | 半双工互斥 | While 正在播放，When 收到录音请求，系统**必须**先停止播放再开始录音 | P0 |
 | AC-22 | 非阻塞 | While 网络线程注入 10 秒假请求，系统**必须**在 <100ms 内仍能收发一行串口并处理按键事件 | P0 |
 | AC-23 | 编排校验接口 | Given 非法动作包，When 调 `POST /api/v1/actions/validate`，系统**必须**返回拒绝且**不触发任何硬件动作** | P0 |
-| AC-24 | 不叠加时间轴 | Given 已有播放中的时间轴，When 收到第二个播放请求，系统**必须**默认拒绝或显式替换，**不得静默叠加** | P0 |
+| AC-24 | 不叠加时间轴 | Given 已有播放中的时间轴，When 收到第二个播放请求，系统**必须**默认拒绝或显式替换，**不得静默叠加**；显式停止、替换或关停应取消在途发帧并执行 STOP/关闭连接，取消不记作播放成功或自动解除安全锁定 | P0 |
 | AC-25 | 资源包安全 | Given 含 `../`、绝对路径、符号链接、超量文件或高压缩比的 zip，When 导入，系统**必须**全部拒绝，失败**必须**保留旧版本 | P1 |
 | AC-26 | 三按键表 | When 注入 `BUTTON n` 事件，系统**必须**逐格符合开发书 5.2 行为表（含「未装公仔不启用电机」） | P1 |
 | AC-27 | 切换前确认 | While 用户正在编辑人设且表单已脏，When 点击另一个角色，系统**必须**先请求确认（行内二次确认）；取消后角色与已填内容**必须**保持不变 | P1 |
 | AC-28 | 人设不得越权 | When 编译人设，系统**必须**由主机追加安全规则；人设内容**不得**覆盖、取消或削弱内容审核、动作联锁与固定拒绝模板 | P0 |
 | AC-29 | 人设内容校验 | If 人设包含尖括号或换行，When 保存，系统**必须**返回 422 且**不写入**磁盘；同一内容走预览端点则**必须**返回 200 + `valid:false`（不是异常） | P1 |
+| AC-30 | 音频异常恢复 | Given 当前录音或播放发生设备错误，系统**必须**发布失败并回到可重试的 IDLE；失败、空录音与已取消请求**不得**进入 ASR；旧操作失败**不得**结束新操作或解除安全锁定；设备恢复后用户可重新发起一轮。设备实测仍属于 C6 | P1 |
+| AC-31 | 直接代办完成声称 | 登记的“我替你转账了”等直接代办完成句式**必须**在 TTS 前替换为固定话术；本轮疑问、提醒和故事语境对照应保留。句式范围见 ADR-013，不代替 C12/C13 验收 | P1 |
 
 ---
 

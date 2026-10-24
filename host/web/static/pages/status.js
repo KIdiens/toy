@@ -7,6 +7,7 @@
 import * as api from '../api.js';
 import { connStateFromStatus } from '../components/status.js';
 import { toast } from '../components/chrome.js';
+import { createTargetDisplay } from './status-targets.js';
 
 function setText(root, sel, text) { const el = root.querySelector(sel); if (el) el.textContent = text; }
 const now = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -23,6 +24,8 @@ export default async function boot() {
 
   let status = null;
   let roles = [];
+  let disposed = false, revision = 0, loadId = 0, firstEvent = true;
+  const targets = createTargetDisplay([...document.querySelectorAll('axis-limit-bar')]);
 
   function renderConn() {
     const state = status ? connStateFromStatus(status) : 'offline';
@@ -42,7 +45,10 @@ export default async function boot() {
     const match = roles.find((r) => r.role_id === status.role_id);
     if (match) {
       role.setAttribute('display-name', match.name || `角色 ${match.role_id}`);
-      role.setAttribute('config-version', match.config_version || '');
+      role.setAttribute('config-version', status.axis_limits?.config_version || match.config_version || '');
+    } else {
+      role.removeAttribute('display-name');
+      role.removeAttribute('config-version');
     }
   }
 
@@ -79,10 +85,22 @@ export default async function boot() {
   }
 
   async function load() {
-    try { status = await api.getStatus(); } catch (e) { if (api.isOffline(e) || e.name === 'ApiError') status = null; }
-    try { roles = await api.listRoles() || []; } catch { roles = []; }
-    try { renderStub(await api.listFeatures()); } catch { renderStub(null); }
-    // 横幅显隐由 renderConn 独占决定（online 转 fault 也必须能再显示出来）。
+    const version = revision, id = ++loadId, started = performance.now();
+    const [snapshot, roleList, features] = await Promise.allSettled([
+      api.getStatus(), api.listRoles(), api.listFeatures(),
+    ]);
+    if (disposed || id !== loadId) return;
+    roles = roleList.status === 'fulfilled' ? roleList.value || [] : [];
+    renderStub(features.status === 'fulfilled' ? features.value : null);
+    // 较新的事件或断线已发生时，迟到的 HTTP 回包不得复活旧目标。
+    if (version === revision) {
+      status = snapshot.status === 'fulfilled' ? snapshot.value : null;
+      targets.update(status, started);
+    }
+    render();
+  }
+
+  function render() {
     renderConn(); renderRole(); renderInterlock(); renderFault(); renderMeta();
   }
 
@@ -90,19 +108,24 @@ export default async function boot() {
   let poll = null;
   const events = api.openEvents({
     onStatus(connected) {
+      if (disposed) return;
+      revision++;
+      firstEvent = true; // 重连后的服务可能已重启，代数允许从新基线开始。
       if (connected) { if (poll) { clearInterval(poll); poll = null; } return; }
+      status = null;
+      targets.clear();
+      render();
       if (!poll) poll = setInterval(load, 5000);
     },
     onEvent(evt) {
-      if (!evt || !evt.kind) return;
-      status = status || {};
-      if (evt.state) status.state = evt.state;
-      if (evt.fault !== undefined) status.fault = evt.fault;
-      if (evt.docked !== undefined) status.docked = evt.docked;
-      if (evt.estop_healthy !== undefined) status.estop_healthy = evt.estop_healthy;
-      if (evt.session_generation !== undefined) status.session_generation = evt.session_generation;
-      if (evt.action) status.action = evt.action;
-      renderConn(); renderInterlock(); renderFault(); renderMeta();
+      if (disposed || evt?.kind !== 'STATUS') return;
+      if (!firstEvent && evt.session_generation < status?.session_generation) return;
+      firstEvent = false;
+      revision++;
+      status = { ...status, ...evt, action: evt.action ?? null, target: evt.target ?? null,
+        axis_limits: evt.axis_limits ?? null };
+      targets.update(status);
+      render();
     },
   });
 
@@ -114,7 +137,15 @@ export default async function boot() {
     e.stopPropagation();
   });
   document.querySelector('#guide-close')?.addEventListener('click', () => guide.close());
-  window.addEventListener('beforeunload', () => events.close());
+  window.addEventListener('pagehide', () => {
+    disposed = true;
+    targets.clear();
+    clearInterval(poll);
+    events.close();
+  });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) location.reload(); // 历史缓存恢复时重新建立已关闭的事件流。
+  });
 
   await load();
 }

@@ -27,6 +27,8 @@ classifiers = [
 dependencies = [
     "fastapi>=0.128,<0.129",
     "uvicorn>=0.34,<0.54",
+    # 基础 uvicorn 不自带 WebSocket 协议；实时事件流使用纯 Python 后端。
+    "wsproto>=1.2,<2",
     "pydantic>=2.7,<3",
     "pyserial==3.5",
     "sounddevice==0.5.6",
@@ -40,6 +42,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 仅重建离线字体时需要；不进入运行时或普通测试依赖。
+fonts = ["fonttools==4.63.0", "brotli==1.2.0"]
 # 开发/测试组：pip install -e ".[dev]"
 dev = [
     "pytest>=8.3",

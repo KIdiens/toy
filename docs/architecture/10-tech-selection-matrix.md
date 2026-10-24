@@ -141,12 +141,14 @@
 | CPython | `>=3.13,<3.14` | 运行时 | Pi 用 Trixie；地板 3.11 兼容 Bookworm |
 | pyserial | `==3.5` | 串口 | 现有 `requirements.txt` 已用 `>=3.5,<4` |
 | fastapi | `>=0.128,<0.129` | Web | 编制时官方 Release Notes 最新 0.128.0 |
-| uvicorn | `>=0.34,<0.54` | ASGI 服务 | 2026-09-22 依 ADR-006 修订上界（实测 0.53.0；原 `<0.53` 与实测环境不符）；`[standard]` extra 在 aarch64 上 uvloop 无 wheel 时自动回退，功能不受影响 |
+| uvicorn | `>=0.34,<0.54` | ASGI 服务 | 2026-09-22 依 ADR-006 修订上界（实测 0.53.0）；使用基础安装，WebSocket 协议由下项显式补齐 |
+| wsproto | `>=1.2,<2` | WebSocket 协议 | 2026-10-22 依 ADR-006 补全；纯 Python，供 Uvicorn 实时事件流升级使用 |
 | pydantic | `>=2.7,<3` | 校验 | FastAPI 0.126+ 起最低 2.7 |
 | sounddevice | `==0.5.6` | 音频 I/O | PortAudio |
 | soundfile | `>=0.13.1,<0.15` | WAV 读写 | 0.14.0 要求 Python>=3.10 |
 | requests | `>=2.32,<3` | 云端 REST | 现有示例已用 |
 | pytest | `>=8.3` | 测试 | 需覆盖现有 `unittest` 用例 |
+| fonttools / brotli | `==4.63.0` / `==1.2.0` | 离线字体重建（可选） | 仅 `.[fonts]` 额外依赖；普通运行及测试不需要这两个包 |
 | lucide | `1.x` | 图标（vendored 静态） | ISC |
 
 > 说明：`pyproject.toml` 是依赖与工具的**唯一硬编码来源**；业务代码不得硬编码任何版本、URL、密钥、颜色。

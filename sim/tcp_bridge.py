@@ -98,7 +98,8 @@ class TcpBridge:
                     break  # 对端关闭
                 if data:
                     controller.receive(data)
-                    controller.run_until(clock.now_ms())
+                # 固件循环独立于串口流量：空闲时仍要采样角色、发状态和检查看门狗。
+                controller.run_until(clock.now_ms())
                 out = controller.take_output()
                 if out:
                     try:

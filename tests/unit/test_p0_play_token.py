@@ -39,7 +39,7 @@ class _SlowMotion:
         self.calls: list[dict] = []
         self.entered = threading.Event()
 
-    def play(self, action, *, role_id=None, min_us=1400, max_us=1600):
+    def play(self, action, *, role_id=None, min_us=1400, max_us=1600, cancel=None):
         self.calls.append({
             "name": action.get("name"),
             "role_id": role_id,

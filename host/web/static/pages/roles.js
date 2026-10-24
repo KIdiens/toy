@@ -25,6 +25,9 @@ export default async function boot() {
   let currentId = null;
   let timer = null;
   let seq = 0;
+  let viewId = 0;
+  let editRevision = 0;
+  const pendingSaves = new Set();
 
   const find = (id) => roles.find((r) => String(r.role_id) === String(id)) || null;
 
@@ -62,10 +65,12 @@ export default async function boot() {
 
   /* ------------------------------------------------------------- 选择 */
   function select(id) {
+    viewId += 1;
     currentId = Number(id);
     picker.setAttribute('selected', String(currentId));
     const role = find(currentId);
     editor.load(role, role ? role.persona || null : null);
+    editor.setSaving(pendingSaves.has(currentId));
     schedulePreview(true);
   }
 
@@ -123,38 +128,53 @@ export default async function boot() {
 
   /* ------------------------------------------------------------- 保存 */
   async function save(persona) {
-    if (currentId === null) return;
+    if (currentId === null || pendingSaves.has(currentId)) return;
     const roleId = currentId;
+    const submittedView = viewId;
+    const submittedRevision = editRevision;
+    const name = find(roleId)?.name || `角色${roleId}`;
+    const sameDraft = () => currentId === roleId && viewId === submittedView && editRevision === submittedRevision;
+    pendingSaves.add(roleId);
     editor.clearFormError();
     editor.setSaving(true);
     try {
       const res = await api.savePersona(roleId, persona);
       const role = find(roleId);
-      if (role) role.persona = res && res.persona ? res.persona : null;
+      const savedPersona = res && res.persona ? res.persona : null;
+      if (role) role.persona = savedPersona;
+      let keptDraft = false;
       if (String(currentId) === String(roleId)) {
-        // 用**落盘结果**回填：后端会压缩空白、丢弃空条，回填后看到的就是真的存下来的值
-        editor.load(role, role ? role.persona : null);
-        schedulePreview(true);
+        if (sameDraft()) {
+          editor.load(role, savedPersona);
+          schedulePreview(true);
+        } else {
+          editor.markSaved(savedPersona);
+          keptDraft = editor.isDirty();
+        }
       }
       picker.setRoles(roles, activeId);
-      toast('success', res && res.persona
-        ? '人设已保存；这一轮正在进行的回复仍用旧人设说完，下一轮生效'
-        : '已保存：该角色恢复默认人设（不再发自定义段落）');
+      toast('success', keptDraft
+        ? `${name}已保存提交时的人设；当前表单的后续改动尚未保存`
+        : savedPersona ? `${name}的人设已保存；正在进行的回复仍用旧人设，下一轮生效`
+          : `${name}已恢复默认人设（不再发自定义段落）`);
     } catch (err) {
-      if (err instanceof api.ClarifyError) {
+      if (!sameDraft()) {
+        toast('error', `${name}提交的人设保存失败：${err.message || '未确认成功'}；当前填写已保留`);
+      } else if (err instanceof api.ClarifyError) {
         editor.applyServerErrors(err);
         toast('error', '有字段不合规，已标在对应字段下方；改动未写入');
       } else if (api.isOffline(err)) {
-        const msg = '保存失败：本机服务不可达，改动没有写入。请确认服务在运行后重试。';
+        const msg = '未确认保存成功：本机服务不可达或响应超时。当前填写已保留，请确认服务后重试。';
         editor.showFormError(msg);
         toast('error', msg);
       } else {
-        const msg = `保存失败：${err.message || '未知错误'}（改动未写入）`;
+        const msg = `保存失败：${err.message || '未知错误'}（当前填写已保留）`;
         editor.showFormError(msg);
         toast('error', msg);
       }
     } finally {
-      editor.setSaving(false);
+      pendingSaves.delete(roleId);
+      if (currentId === roleId) editor.setSaving(false);
     }
   }
 
@@ -194,8 +214,9 @@ export default async function boot() {
 
   /* ------------------------------------------------------------- 事件 */
   picker.addEventListener('role-select', (e) => requestSelect(e.detail.role_id));
-  editor.addEventListener('persona-change', () => schedulePreview());
+  editor.addEventListener('persona-change', () => { editRevision += 1; schedulePreview(); });
   editor.addEventListener('persona-reset', () => {
+    editRevision += 1;
     schedulePreview(true);
     toast('info', '已清空本页字段；点「保存人设」才会真正恢复默认人设');
   });

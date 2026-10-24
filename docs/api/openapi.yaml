@@ -205,7 +205,7 @@ paths:
       operationId: playAction
       description: >
         第二个播放请求默认拒绝或显式替换，不悄悄叠加两条时间轴。
-        必须附预期 role_id 与动作版本，避免网页缓存把上一角色动作发给新公仔。
+        必须附预期 role_id；编排快照还须附当前角色配置版本。省略 action 的旧调用仍按磁盘白名单执行。
       requestBody:
         required: true
         content:
@@ -233,6 +233,10 @@ paths:
       tags: [actions]
       summary: 立即取消队列并通知 MCU
       operationId: stopAction
+      description: >
+        使当前播放令牌与排队动作立即失效；在途运动循环检测取消后执行 STOP 并关闭连接。
+        同时清除待执行的 AI 播放计划；THINKING 中作废当前轮次，旧模型结果返回后不得再开播。
+        stopped=true 确认软件停止请求已生效，不表示舵机已经机械到位或完成电气断电。
       requestBody:
         required: true
         content:
@@ -256,7 +260,7 @@ paths:
       operationId: listActionFiles
       description: >
         只读。返回当前角色 actions 目录下的动作文件名与激活指针，
-        供编排器（/editor）填充文件列表；active 为当前编辑/指针所在的文件。
+        供编排器（/editor）填充文件列表；active 是服务端默认/上次磁盘动作指针。页面高亮须以实际加载来源为准。
       responses:
         '200':
           description: 动作文件列表
@@ -270,6 +274,37 @@ paths:
                       data:
                         type: array
                         items: { $ref: '#/components/schemas/ActionFile' }
+
+  /actions/files/{action_id}:
+    get:
+      tags: [actions]
+      summary: 读取所选文件的完整动作与角色版本
+      operationId: getActionDocument
+      description: 只读；角色须与当前设备匹配，动作 ID 须在角色白名单中，不修改激活指针。
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: role_id
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 3 }
+      responses:
+        '200':
+          description: 完整动作、配置版本和机械限幅
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ActionDocument' }
+        '409':
+          description: 角色已变、文件不可读或动作非法
+        '422':
+          description: 缺少或非法角色编号
 
   /content/import:
     post:
@@ -547,12 +582,47 @@ components:
             action_id: { type: string }
             seq: { type: integer }
             progress_ms: { type: integer }
+        target:
+          allOf: [{ $ref: '#/components/schemas/MotionTarget' }]
+          nullable: true
+        axis_limits:
+          allOf: [{ $ref: '#/components/schemas/AxisLimits' }]
+          nullable: true
         worker_alive:
           type: boolean
           description: worker 线程存活探针（P0-2：线程静默死亡时可观测）
         worker_faults:
           type: integer
           description: worker 循环捕获到的致命异常累计次数
+
+    MotionTarget:
+      type: object
+      description: 成功写入运动链路的 FRAME 指令目标，非 MCU 确认或实测位置。停止、完成、换角色、故障或超过 1000ms 时为 null。
+      required: [source, role_id, config_version, action_id, seq, progress_ms, target_us, valid_for_ms]
+      properties:
+        source: { type: string, enum: [sent_frame] }
+        role_id: { type: integer, minimum: 1, maximum: 3 }
+        config_version: { type: string }
+        action_id: { type: string }
+        seq: { type: integer, minimum: 0, description: 实际 FRAME 线序号 }
+        progress_ms: { type: integer, minimum: 0 }
+        target_us:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { type: integer }
+        valid_for_ms: { type: integer, minimum: 1, maximum: 1000, description: 服务端采样时剩余有效期 }
+
+    AxisLimits:
+      type: object
+      description: 当前已加载角色配置的限幅，与目标的角色和配置版本一起校验。
+      required: [role_id, config_version, min_us, max_us, neutral_us]
+      properties:
+        role_id: { type: integer, minimum: 1, maximum: 3 }
+        config_version: { type: string }
+        min_us: { type: integer }
+        max_us: { type: integer }
+        neutral_us: { type: integer }
 
     Fault:
       type: object
@@ -681,12 +751,33 @@ components:
           type: string
           minLength: 1
           maxLength: 60
-          description: 当前角色动作白名单中的动作 ID（非文件路径）
-        action_version: { type: string }
+          description: 省略 action 时须为角色白名单 ID；显式编排快照时为来源 ID 或 draft 标签，均非文件路径
+        action_version:
+          type: string
+          description: 角色配置版本；提供时须与当前配置一致，显式 action 快照必须携带
+        action:
+          allOf:
+            - $ref: '#/components/schemas/ActionDoc'
+          description: 编排器当前文档快照；不写盘，服务端按当前角色限幅、速度和状态重新校验；省略则读取白名单磁盘动作
         replace_current:
           type: boolean
           default: false
           description: true 显式替换当前播放，false 时若正在播放则拒绝
+
+    ActionDocument:
+      type: object
+      required: [action_id, config_version, action, limits]
+      properties:
+        action_id: { type: string }
+        config_version: { type: string }
+        action: { $ref: '#/components/schemas/ActionDoc' }
+        limits:
+          type: object
+          properties:
+            min_us: { type: integer }
+            max_us: { type: integer }
+            neutral_us: { type: integer }
+            max_speed_us_s: { type: integer }
 
     ActionPlayResult:
       type: object

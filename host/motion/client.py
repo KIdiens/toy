@@ -10,16 +10,18 @@
 - 收到 ``ERR``/``FAULT`` 立即中止；``finally`` **必定**发出 ``STOP``；
 - **绝不自动重新解锁**（不重发 ARM）。
 
-差异只有两点（均已声明的改进，不改变对外行为）：依赖注入 ``Clock`` + ``MotionLink``；
-动作校验改由 ``host/motion/validation.py`` 单一真源提供。
+正常路径的既有改进：依赖注入 ``Clock`` + ``MotionLink``；动作校验由
+``host/motion/validation.py`` 单一真源提供。可选 ``cancel`` 支持停止/替换/关停；
+取消会走 STOP/close，抛出 ``MotionCancelled``，不伪装成正常播放完成。
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from host.core.errors import InterlockError, MotionTimeout, ProtocolError
+from host.core.errors import InterlockError, MotionCancelled, MotionTimeout, ProtocolError
 from host.motion.timeline import Timeline
 from host.motion.validation import HIGH, LOW, validate
 
@@ -30,6 +32,17 @@ STATE_REPORT_TIMEOUT_S = 0.8
 HOLD_FINAL_S = 0.15
 TAIL_TIMEOUT_S = 2.0
 POLL_S = 0.02
+
+
+@dataclass(frozen=True, slots=True)
+class MotionProgress:
+    """已写入链路的指令目标；不是 MCU 确认或实测位置。"""
+
+    role_id: int
+    seq: int
+    progress_ms: int
+    target_us: tuple[int, ...]
+    sent_at_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +57,8 @@ class PlayResult:
 class MotionClient:
     """把动作时间线播到 MCU，并在任何异常路径上安全停机。"""
 
+    supports_progress = True
+
     def __init__(self, link, clock, *, boot_wait_s: float = BOOT_WAIT_S, logger=None) -> None:
         self.link = link
         self.clock = clock
@@ -51,7 +66,9 @@ class MotionClient:
         self.logger = logger
 
     def play(self, action: Mapping[str, Any], *, role_id: int | None = None,
-             min_us: int = LOW, max_us: int = HIGH) -> PlayResult:
+             min_us: int = LOW, max_us: int = HIGH,
+             cancel: Callable[[], bool] | None = None,
+             on_progress: Callable[[MotionProgress], None] | None = None) -> PlayResult:
         """下发一个动作。
 
         ``min_us``/``max_us`` 由调用方（持有角色配置的一侧）注入，缺省即固件台架
@@ -62,20 +79,23 @@ class MotionClient:
         """
         validate(action, min_us=min_us, max_us=max_us)
         expected_role = int(role_id if role_id is not None else action["role_id"])
-        link, clock = self.link, self.clock
+        link = self.link
+        self._check_cancel(cancel)
         try:
             link.open()
-            clock.sleep(self.boot_wait_s)
+            self._wait_boot(cancel)
             link.reset_input_buffer()
+            self._check_cancel(cancel)
             link.write_line("STOP")
             link.write_line("STATUS")
-            state = self._await_state()
+            state = self._await_state(cancel)
             # STATE 的内容为 解锁状态 到位状态 急停健康状态 角色编号。
             if not state or state[1:] != [1, 1, expected_role]:
                 raise InterlockError("到位、急停或角色编号未通过检查")
+            self._check_cancel(cancel)
             link.write_line(f"ARM {expected_role}")
-            self._await_arm(expected_role)
-            return self._stream(action, expected_role)
+            self._await_arm(expected_role, cancel)
+            return self._stream(action, expected_role, cancel, on_progress)
         finally:
             self._safe_stop_and_close(link)
 
@@ -97,18 +117,37 @@ class MotionClient:
                 self.logger.warning("关闭串口失败：%s", exc)
 
     # ---------- 前置阶段 ----------
-    def _await_state(self) -> list[int] | None:
+    @staticmethod
+    def _check_cancel(cancel) -> None:
+        if cancel is not None and cancel():
+            raise MotionCancelled("当前动作已取消")
+
+    def _wait_boot(self, cancel) -> None:
+        if cancel is None:
+            self.clock.sleep(self.boot_wait_s)  # 无取消接口时保留冻结基线的时序。
+            return
+        deadline = self.clock.now_ms() + round(self.boot_wait_s * 1000)
+        while True:
+            self._check_cancel(cancel)
+            remaining = deadline - self.clock.now_ms()
+            if remaining <= 0:
+                return
+            self.clock.sleep(min(POLL_S, remaining / 1000))
+
+    def _await_state(self, cancel=None) -> list[int] | None:
         deadline = self.clock.now_ms() + int(STATUS_TIMEOUT_S * 1000)
         while self.clock.now_ms() < deadline:
+            self._check_cancel(cancel)
             for line in self.link.read_lines():
                 if line.startswith("STATE "):
                     return [int(x) for x in line.split()[1:]]
             self.clock.sleep(POLL_S)
         return None
 
-    def _await_arm(self, expected_role: int) -> None:
+    def _await_arm(self, expected_role: int, cancel=None) -> None:
         deadline = self.clock.now_ms() + int(ARM_TIMEOUT_S * 1000)
         while self.clock.now_ms() < deadline:
+            self._check_cancel(cancel)
             for line in self.link.read_lines():
                 if line == f"OK ARM {expected_role}":
                     return
@@ -118,7 +157,8 @@ class MotionClient:
         raise MotionTimeout("控制器没有确认解锁")
 
     # ---------- 播放主循环 ----------
-    def _stream(self, action: Mapping[str, Any], expected_role: int) -> PlayResult:
+    def _stream(self, action: Mapping[str, Any], expected_role: int,
+                cancel=None, on_progress=None) -> PlayResult:
         clock = self.clock
         timeline = Timeline(action, clock)
         timeline.begin()
@@ -128,10 +168,19 @@ class MotionClient:
         settled_at_ms: int | None = None
         try:
             while True:
-                values = timeline.frame()
+                self._check_cancel(cancel)
+                progress_ms, values = timeline.sample_frame()
                 if timeline.at_end() and final_seq is None:
                     final_seq = seq
                 self.link.write_line(f"FRAME {seq} " + " ".join(map(str, values)))
+                if on_progress is not None:
+                    try:
+                        on_progress(MotionProgress(expected_role, seq, progress_ms,
+                                                   tuple(values), clock.now_ms()))
+                    except Exception:  # noqa: BLE001  诊断消费者失败不得中断安全协议或重发 ARM。
+                        (self.logger or logging.getLogger(__name__)).exception(
+                            "目标进度回调失败，本轮停止发布进度")
+                        on_progress = None
                 seq += 1
 
                 for line in self.link.read_lines():

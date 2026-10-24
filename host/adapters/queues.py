@@ -13,6 +13,8 @@ THINKING。本模块把「一个队列」拆成三路，使每类命令都有专
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from host.core.bus import WorkQueue
 from host.core.events import Command, CommandKind
 
@@ -30,7 +32,8 @@ AUDIO_KINDS: frozenset[CommandKind] = frozenset({
 class CommandRouter:
     """核心 → 领域工作线程的唯一出口；``put`` 即完成分类投递。"""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_audio: Callable[[Command], Command] | None = None) -> None:
+        self._on_audio = on_audio
         self.motion: WorkQueue[Command] = WorkQueue(name="motion")
         self.net: WorkQueue[Command] = WorkQueue(name="net")
         self.audio: WorkQueue[Command] = WorkQueue(name="audio")
@@ -41,6 +44,8 @@ class CommandRouter:
         if kind in NET_KINDS:
             self.net.put(command)
         elif kind in AUDIO_KINDS:
+            if self._on_audio is not None:
+                command = self._on_audio(command)
             self.audio.put(command)
         else:
             self.motion.put(command)

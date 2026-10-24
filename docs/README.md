@@ -13,7 +13,7 @@
 | `architecture/30-traceability.md` | PRD 功能 **M1–M14** → 落地文件 → 用户可见行为 → 验收方式（追溯表） | 全体；验收/交接 |
 | `architecture/40-storage-design.md` | 存储层契约：数据库门面、迁移策略、四仓储函数签名、`settings` KV 定性与数据纪律 | 后端；验收 |
 | `api/openapi.yaml` | 网页管理 API 契约（OpenAPI 3.0.3，前后端唯一依据） | 前端/后端 |
-| `decisions/ADR-001..012` | 每条选型一份 MADR 决策记录 | 追溯 |
+| `decisions/ADR-001..013` | 选型及行为边界的决策记录 | 追溯 |
 | `decisions/OPEN-DECISIONS.md` | 未关闭决策登记（主动不做/无法本阶段关闭项），不混入已 Accepted 的 ADR | 全体 |
 
 ## 决策一览
@@ -32,6 +32,7 @@
 | ADR-010 | 云端 AI | Provider Protocol + Stub/Qwen 切换 |
 | ADR-011 | 无硬件验证 | MCU 模拟器 + 虚拟时钟 + 回放 |
 | ADR-012 | 颜色/设计令牌 | 语义化 CSS 变量，禁硬编码色值 |
+| ADR-013 | 直接代办完成声称 | 句式审核与 TTS 前替换，OD-8 已关闭；C12/C13 待验证 |
 
 ## P0 规则（不可协商）
 

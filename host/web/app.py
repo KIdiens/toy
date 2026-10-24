@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -143,7 +144,12 @@ def _describe(exc: RequestValidationError) -> str:
 def _mount_static(app: FastAPI) -> None:
     if not STATIC_DIR.is_dir():
         return
+    # Windows 的系统 MIME 表可能未登记 WOFF2，固定为字体的标准类型。
+    mimetypes.add_type("font/woff2", ".woff2")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    tokens = STATIC_DIR.parent / "design" / "design-tokens.css"
+    if tokens.is_file():
+        app.get("/design/design-tokens.css", include_in_schema=False)(_page_handler(tokens))
     for route, filename in PAGE_ROUTES.items():
         target = STATIC_DIR / filename
         if target.is_file():

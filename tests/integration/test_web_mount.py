@@ -81,6 +81,32 @@ def test_pages_and_static_are_served(prod_client: TestClient) -> None:
     assert css.status_code == 200 and "css" in css.headers["content-type"]
 
 
+def test_app_stylesheet_can_load_its_design_tokens(prod_client: TestClient) -> None:
+    stylesheet = prod_client.get("/static/styles.css").text
+    imports = re.findall(r'@import\s+url\(["\']([^"\']+)["\']\)', stylesheet)
+    assert imports, "应用样式必须引用统一设计令牌"
+    for url in imports:
+        response = prod_client.get(url)
+        assert response.status_code == 200, f"样式导入未挂载：{url}"
+        assert response.headers["content-type"].startswith("text/css")
+        assert "--surface" in response.text
+        resources = re.findall(r'url\(["\']?(/[^)"\']+)["\']?\)', response.text)
+        for resource in resources:
+            asset = prod_client.get(resource)
+            assert asset.status_code == 200, f"样式资源缺失：{resource}"
+            if resource.endswith(".woff2"):
+                assert asset.headers["content-type"] == "font/woff2"
+
+
+def test_editor_loads_font_definitions_once(prod_client: TestClient) -> None:
+    html = prod_client.get("/editor").text
+    stylesheets = re.findall(r'href=["\']([^"\']+\.css)["\']', html)
+    assert stylesheets, "编排器必须加载应用样式"
+    pattern = r'@import\s+url\(["\']/design/design-tokens\.css["\']\)'
+    token_imports = sum(len(re.findall(pattern, prod_client.get(url).text)) for url in stylesheets)
+    assert token_imports == 1, "编辑器附加样式不能再次导入全局字体定义"
+
+
 # ------------------------------------------------------------------ 错误信封
 def test_unknown_route_uses_envelope(prod_client: TestClient) -> None:
     response = prod_client.get("/api/v1/does-not-exist")

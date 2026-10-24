@@ -2,7 +2,7 @@
 
 设计要点：
 
-- 7 状态、约 20 条迁移，**表即规格**，可穷举测试。
+- 7 状态、显式迁移表，**表即规格**，可穷举测试。
 - ``can_fire`` 返回 ``(ok, reason)``；非法迁移**不抛未捕获异常**，返回拒绝原因并计数。
 - ``SAFETY_TRIP`` 是**唯一**允许从任意态抢占的迁移（已锁定态除外）。
 - 每次进入 ``IDLE`` 或角色切换：``session_generation += 1``，用于丢弃迟到回包。
@@ -43,7 +43,9 @@ class Trigger(StrEnum):
     REC_CANCEL = "REC_CANCEL"
     AI_DONE = "AI_DONE"
     AI_FAIL = "AI_FAIL"
+    AUDIO_FAIL = "AUDIO_FAIL"
     PLAY_DONE = "PLAY_DONE"
+    LOCAL_PLAY = "LOCAL_PLAY"
     PERFORM_PRESS = "PERFORM_PRESS"
     PERFORM_DONE = "PERFORM_DONE"
     SAFETY_TRIP = "SAFETY_TRIP"
@@ -60,20 +62,24 @@ TRANSITIONS: dict[tuple[State, Trigger], State] = {
     (S.SELF_TEST, T.BOOT_FAULT): S.FAULT_LOCKED,
     (S.IDLE, T.DIALOG_PRESS): S.RECORDING,
     (S.IDLE, T.PERFORM_PRESS): S.PERFORMING,
+    (S.IDLE, T.LOCAL_PLAY): S.SPEAKING,
     (S.IDLE, T.IDLE_TICK): S.PERFORMING,
     (S.IDLE, T.VOLUME_PRESS): S.IDLE,
     (S.RECORDING, T.DIALOG_PRESS): S.THINKING,  # 对话键结束录音
     (S.RECORDING, T.REC_STOP): S.THINKING,
     (S.RECORDING, T.PERFORM_PRESS): S.IDLE,  # 表演键取消录音
     (S.RECORDING, T.REC_CANCEL): S.IDLE,
+    (S.RECORDING, T.AUDIO_FAIL): S.IDLE,
     (S.THINKING, T.DIALOG_PRESS): S.IDLE,  # 取消本轮，generation+1
     (S.THINKING, T.PERFORM_PRESS): S.PERFORMING,
     (S.THINKING, T.AI_DONE): S.SPEAKING,
     (S.THINKING, T.AI_FAIL): S.IDLE,
+    (S.THINKING, T.AUDIO_FAIL): S.IDLE,
     (S.THINKING, T.VOLUME_PRESS): S.THINKING,
     (S.SPEAKING, T.DIALOG_PRESS): S.RECORDING,  # 先停播再录
     (S.SPEAKING, T.PERFORM_PRESS): S.IDLE,
     (S.SPEAKING, T.PLAY_DONE): S.IDLE,
+    (S.SPEAKING, T.AUDIO_FAIL): S.IDLE,
     (S.SPEAKING, T.VOLUME_PRESS): S.SPEAKING,
     (S.PERFORMING, T.DIALOG_PRESS): S.RECORDING,  # 先停动作/播放再录
     (S.PERFORMING, T.PERFORM_PRESS): S.IDLE,

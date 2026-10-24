@@ -33,7 +33,7 @@ PRIVATE_TERMS: tuple[str, ...] = (
     "身份证号", "手机号",
 )
 # 越界声称「已完成现实操作」：模型不具备改变物理世界 / 代办线下事务的能力。
-# 中文完成体有两个锚点，但**叙事句不得误拦**（玩具讲故事是核心场景，误拦危害远大于漏判）：
+# 中文完成体使用前置锚、把/将后置锚及直接代办分支；新增分支须配叙事对照：
 #   前置锚：「已经 / 已」+（可选受益对象）+ 现实动作词，且**不是**第三人称叙事主语。
 #   后置锚：第一人称「我（+受益对象）… 把 / 将 … 现实动作 + 完成收尾 了/啦/好啦」。
 # 两者都要求「说话者即行动者」：前置锚排除 他/她/它/妈妈/爸爸 等叙事主语；后置锚要求
@@ -61,6 +61,21 @@ _CLAIM_SUFFIXED = re.compile(
     + _ACTIONS_ALT + r")" + _COMPLETION + r"(?![吗呢吧？?])"
 )
 
+# 直接代办句（OD-8）：不用「把/将」也可能声称完成了现实操作。
+# 要求第一人称出现在句段开头，动作紧跟受益对象；不越过引用、否定与疑问词，
+# 不把「如果我…」「我帮你记录了付款提醒」或引用故事中的发言扩成新命中。
+_RECIPIENT = r"(?:你们|你|您|我|他|她|它|妈妈|爸爸|家长|家里人|老师)"
+_CLAIM_WHEN = r"(?:刚刚|刚才|刚|现在|今天|这次)?\s*"
+_CLAIM_BODY = r"[^,，。.!！？?；;:：\n没不吗呢吧“”‘’\"']"
+_CLAIM_BENEFACTIVE = re.compile(
+    r"(?:^|(?<=[,，。.!！？?；;:：]))\s*" + _CLAIM_WHEN + r"我(?:们)?\s*"
+    + _CLAIM_WHEN + r"(?:帮|替)\s*" + _RECIPIENT + r"\s*" + _CLAIM_WHEN
+    + r"(?:给\s*" + _RECIPIENT + r"\s*)?"
+    r"(?:" + _ACTIONS_ALT + r")" + _CLAIM_BODY + r"{0,12}?" + _COMPLETION
+    + _CLAIM_BODY + r"{0,12}(?=$|[,，。.!！；;])"
+)
+_FICTION_INTRO = re.compile(r"(?:在)?(?:这个)?(?:故事|童话)(?:里|中)[,，:：]\s*")
+
 _REQUEST_HINT = re.compile(r"(怎么|如何|帮我|教我|告诉我|能不能|可以吗|我要)")
 _URL = re.compile(r"https?://", re.IGNORECASE)
 _PHONE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
@@ -78,9 +93,15 @@ _PRIVATE_LOCATION = re.compile(
 
 
 def _realworld_claim(text: str) -> str | None:
-    """命中的「已完成现实操作」声称原文；前置锚与后置锚任一命中即返回。"""
+    """返回命中的完成声称；检查前置锚、把/将后置锚和直接代办分支。"""
     match = _CLAIM_PREFIXED.search(text) or _CLAIM_SUFFIXED.search(text)
-    return match.group(0) if match else None
+    if match:
+        return match.group(0)
+    for match in _CLAIM_BENEFACTIVE.finditer(text):
+        start = max(text.rfind(mark, 0, match.start()) for mark in "。.!！？?；;\n") + 1
+        if not _FICTION_INTRO.fullmatch(text[start:match.start()].strip()):
+            return match.group(0)
+    return None
 
 
 @dataclass(frozen=True, slots=True)

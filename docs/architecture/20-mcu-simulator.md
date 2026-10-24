@@ -75,6 +75,7 @@ class MotionLink(Protocol):
 
 - **同一份串口代码对接真机与模拟器**：这是选 `socket://` 的关键收益——`host/motion/serial_link.py` 无需任何 `if sim:` 分支。生产连接字符串来自配置（`MOTION_PORT`），值可以是 `COM5`、`/dev/serial/by-id/usb-...` 或 `socket://127.0.0.1:5555`。
 - `SimLink` 与 `ReplayLink` 仅存在于测试/开发路径，生产代码不 import。
+- TCP 服务端的固件主循环必须独立于输入流量持续推进：没有 STATUS/FRAME 输入时，角色稳定采样、周期 STATE 与丢帧看门狗仍自行运行；真实 socket 回归见 `tests/integration/test_tcp_idle.py`。
 
 ### 4.1 录制会话格式（`sim/session.py`）
 

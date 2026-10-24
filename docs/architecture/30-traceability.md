@@ -27,6 +27,10 @@
 | **M5** | 角色注册与切换（role_id 1/2/3、配置、`session_generation`） | `host/roles/registry.py`、`host/roles/schema.py`（Pydantic）、`host/web/routers/roles.py`；`session_generation` 落 `host/core/state_machine.py`+`engine.py` | 换公仔后**旧角色的迟到回复不再播放**；网页播放请求须 `role_id` 与当前一致否则被拒 | `tests/unit/test_roles.py`（切角色 `session_generation` 自增；旧 generation 迟到回复被丢弃；播放前 role_id 校验）；PRD **A5** |
 | **M10** | 音频抽象层（真后端 + 文件后端） | `host/audio/backend.py`（Protocol）、`host/audio/null_backend.py`（无设备默认）、`host/audio/sd_backend.py`、`host/audio/recorder.py`、`host/audio/player.py` | 按对话键有录音/播放反馈（无设备时以定长虚拟录放呈现）；**说话时不监听**（半双工互斥） | `tests/unit/test_audio.py`（文件后端跑 录音夹具→识别→合成→播放 全链路；断言半双工互斥）；E2E §11 步骤 4；PRD §5.2 M10 |
 
+2026-10-22 补充 M2 的运行中取消回归：`host/adapters/motion_execution.py` 负责在途执行与结果回投，`execution.py` 保留队列调度；停止、替换、关停及安全锁定均使旧运动取消，旧结果不算完成。证据为 `tests/unit/test_motion_cancellation.py` 与真实 pyserial/TCP 的 `tests/integration/test_motion_interrupt.py`；TCP 空闲采样与看门狗见 `tests/integration/test_tcp_idle.py`。这些软件证据不替代实物 C3/C5。
+
+2026-10-24 补充 M11 状态页目标链路：`host/motion/client.py` 发布已写入 FRAME，`host/adapters/status.py` 提供有归属和有效期的副本快照，HTTP/WS 共同传输，`pages/status-targets.js` 向四轴组件注入目标并按角色限幅展示。停止、完成、故障、换角色、配置变化、过期及断线均不得残留目标；旧 HTTP 回包和旧播放回调不得覆盖新状态。回归见 `tests/unit/test_motion_progress.py`、`tests/integration/test_motion_targets.py`、`tests/frontend/verify_status_targets.mjs`；工程外 Chrome/CDP 已检查桌面、窄屏、过期和断线渲染。这些数值为指令目标，不是位置反馈，也不代表 C1/C2/C6 验收。
+
 ## 2. Backlog P1（4 项，接口骨架 + Spec 条目预留）
 
 | M | PRD 功能 | 落地文件路径（**预留位置**） | 用户可见行为（目标） | 验收方式（预留） |
@@ -36,7 +40,13 @@
 | **M9** | 本地内容库 + 本地表演（音频+动作统一单调时钟） | `host/audio/catalog.py`（内容库 + 响度/峰值检查）、`host/tools/content.py`（`play_content`/`play_action`）、`host/motion/timeline.py`（统一单调时钟） | **断网也能**听本地故事/看本地表演；音频与动作同步 | 音频文件 + 动作时间线在**同一单调时钟**下采样；断言断网（桩后端抛错）仍可播放；断言"按经过时间采样"而非"每帧 sleep 累加"；PRD §5.2 M9 |
 | **M11** | 网页管理 + 可视化关键帧编排（validate/play/stop/import/export） | `host/web/routers/actions.py`、`host/web/routers/content.py`、`host/web/static/editor.html`、`editor.js`、`timeline.js`、`host/roles/rolepack.py`；契约见 `../api/openapi.yaml` | 网页拖关键帧编动作、**预演**（不触硬件）、停止立即取消、导入导出角色包 | FastAPI `TestClient`：校验接口不触硬件；播放接口要求 `role_id` 匹配；`stop` 立即取消队列；连续两个播放请求按规则**拒绝/替换而非静默叠加**；PRD **A8** |
 
+2026-10-23 补充 M11 编排文档一致性：`host/adapters/action_documents.py` 提供完整文件读取、配置版本复核与快照校验；页面通过 `editor-document.js` 管理来源、草稿和请求先后次序，`editor-rails.js` 提供窄屏侧栏入口。省略快照的播放仍走原白名单；显式编排快照只在内存执行，不写角色包。回归见 `tests/integration/test_editor_documents.py`、`tests/frontend/verify_editor_documents.mjs`；浏览器实测覆盖预览/导出/下发同源、迟到响应、窄屏侧栏与实际 pyserial/TCP FRAME。该测试环境使用固件等价模拟器，不证明真实舵机轨迹。
+
+2026-10-24 补充 M7/M14：播放工具不再仅返回假调度标记，安全回复结束后按序进入实际音频/运动队列。`tool_scope.py` 管每轮守卫与效果收集，`ai_responses.py` 管网络响应，`tool_performer.py` 管准备与核心派发；拒绝模板已合成时仍播放安全语音。证据见 `tests/unit/test_ai_tool_scope.py`、`tests/integration/test_ai_performance.py`、`tests/integration/test_ai_tools_threads.py` 及 [ADR-014](../decisions/ADR-014-deferred-media-tool-execution.md)。本轮只验证串行执行与取消，不关闭 M9 的音画同步和实物 C6。
+
 ## 3. Backlog P2（2 项，接口骨架 + Spec 条目预留）
+
+
 
 | M | PRD 功能 | 落地文件路径（**预留位置**） | 用户可见行为（目标） | 验收方式（预留） |
 |---|----------|------------------------------|----------------------|------------------|
@@ -49,6 +59,6 @@
 - 选型：`10-tech-selection-matrix.md`（12 项，含版本号与锁定理由）。
 - 无硬件方案：`20-mcu-simulator.md`（故障注入矩阵、回放回归）。
 - 契约：`../api/openapi.yaml`（OpenAPI 3.0.3，14 paths / 14 schemas，全部 `/api/v1/` 前缀）。
-- 决策：`../decisions/ADR-001..012`；未关闭事项见 `../decisions/OPEN-DECISIONS.md`。
+- 决策：`../decisions/ADR-001..013`；未关闭事项见 `../decisions/OPEN-DECISIONS.md`。
 
 > 判定：本表 **MVP 切片 8 项**落点齐备、验收可复现即视为「无硬件档位」交付完成；6 项 Backlog 已标预留位置，实装进后续迭代，不改动本表结构。

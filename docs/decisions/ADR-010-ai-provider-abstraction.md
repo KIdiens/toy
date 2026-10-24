@@ -28,3 +28,5 @@ Accepted (2026-09-21)
 
 ## Related ADRs
 ADR-003（网络线程）、ADR-006（设置接口回显密钥约束）。
+另见 [ADR-013](ADR-013-direct-benefactive-output-claims.md)：直接代办完成声称的出声前审核，关闭 OD-8。
+另见 [ADR-014](ADR-014-deferred-media-tool-execution.md)：播放工具准备、会话取消、安全拒绝语音与回复后的串行执行。

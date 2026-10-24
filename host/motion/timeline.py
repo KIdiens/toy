@@ -44,4 +44,9 @@ class Timeline:
 
     def frame(self) -> list[int]:
         """当前时刻的目标脉宽（四轴）。"""
-        return sample(self.action, self.clamped_elapsed_ms())
+        return self.sample_frame()[1]
+
+    def sample_frame(self) -> tuple[int, list[int]]:
+        """进度与目标使用同一次时钟采样。"""
+        elapsed = self.clamped_elapsed_ms()
+        return elapsed, sample(self.action, elapsed)

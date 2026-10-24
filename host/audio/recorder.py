@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import array
 from dataclasses import dataclass
+from threading import Event
 
-from host.audio.backend import Recording
+from host.audio.backend import DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE, Recording
 
 MAX_RECORD_SECONDS = 15.0
 MIN_RECORD_SECONDS = 0.3
@@ -54,12 +55,18 @@ class Recorder:
         self.player = player
         self.last: Recording | None = None
 
-    def record(self, max_seconds: float | None = None) -> Recording:
+    def record(self, max_seconds: float | None = None, *, cancel: Event | None = None) -> Recording:
+        if cancel is not None and cancel.is_set():
+            return Recording(b"", getattr(self.backend, "sample_rate", DEFAULT_SAMPLE_RATE),
+                             getattr(self.backend, "channels", DEFAULT_CHANNELS), has_speech=False)
         if self.player is not None:
             self.player.stop()  # 半双工：先停播再录（AC-21）
         limit = min(self.policy.max_seconds, max_seconds or self.policy.max_seconds)
         self.backend.open()
-        recorded = self.backend.record(limit)
+        if cancel is not None and getattr(self.backend, "supports_cancel", False):
+            recorded = self.backend.record(limit, cancel=cancel)
+        else:
+            recorded = self.backend.record(limit)
         result = self._postprocess(recorded, limit)
         self.last = result
         return result

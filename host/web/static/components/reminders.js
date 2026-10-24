@@ -102,7 +102,7 @@ class ReminderRow extends Base {
     const enabled = status === 'pending';
     const next = nextFire(r);
     const time = isoToLocalTime(r.due_at_utc, tz);
-    return `<div class="row" role="listitem" style="grid-template-columns: 128px minmax(0,1fr) 120px 110px 160px auto">
+    return `<div class="row reminder-grid" role="listitem">
       <div><span class="timecode">${esc(r.repeat_rule && r.repeat_rule !== 'once' ? REPEAT[r.repeat_rule] || r.repeat_rule : '')}
         <span data-num>${esc(r.repeat_rule && r.repeat_rule !== 'once' ? time : fmtInZone(r.due_at_utc, tz))}</span></span>
         ${!r.repeat_rule || r.repeat_rule === 'once' ? '' : `<br><span class="xs meta" data-num>${esc(time)}</span>`}
@@ -136,12 +136,12 @@ class ReminderList extends Base {
   template() {
     if (str(this, 'busy') === 'true') return `<loader-skeleton rows="3"></loader-skeleton>`;
     const items = this._items || [];
-    const head = `<div class="row xs meta" role="presentation" aria-hidden="true"
-      style="grid-template-columns: 128px minmax(0,1fr) 120px 110px 160px auto">
+    const head = `<div class="row reminder-grid xs meta" role="presentation" aria-hidden="true">
       <span>时间 / 重复</span><span>内容</span><span>角色音色</span><span>状态</span><span>下次触发</span><span class="right">操作</span></div>`;
     const rows = items.map((r) => `<reminder-row reminder-id="${esc(r.id)}" status="${esc(r.status)}"
       timezone="${esc(r.timezone || TZ)}"></reminder-row>`).join('');
-    return `<div role="list" aria-label="提醒列表">${head}<div class="rows">${rows}</div></div>`;
+    return `<div class="reminder-scroll" role="region" aria-label="提醒列表，可横向滚动" tabindex="0">
+      <div role="list" aria-label="提醒列表">${head}<div class="rows">${rows}</div></div></div>`;
   }
   mounted() {
     this.addEventListener('row-toggle', (e) => { e.stopPropagation(); emit(this, 'row-toggle', e.detail); });

@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from threading import Event
+
 from host.audio.backend import DEFAULT_SAMPLE_RATE
 
 VOLUME_LEVELS: dict[str, float] = {"low": 0.3, "mid": 0.6, "high": 1.0}
@@ -59,15 +61,25 @@ class Player:
         """
         return self.set_level(self.peek_next_level())
 
-    def play(self, clip, *, sample_rate: int | None = None) -> int:
+    def play(self, clip, *, sample_rate: int | None = None, cancel: Event | None = None) -> int:
         """播放片段，返回时长毫秒。真实后端内部阻塞；空后端立即返回。"""
+        if cancel is not None and cancel.is_set():
+            return 0
         self.backend.open()
         duration = int(float(getattr(clip, "duration_s", 0.0)) * 1000)
         self.total_ms = duration
         self.progress_ms = 0
         self.playing = True
-        self.backend.play(clip, volume=self.volume)
-        self.playing = False
+        try:
+            if cancel is not None and getattr(self.backend, "supports_cancel", False):
+                self.backend.play(clip, volume=self.volume, cancel=cancel)
+            else:
+                self.backend.play(clip, volume=self.volume)
+        finally:
+            self.playing = False
+        if cancel is not None and cancel.is_set():
+            self.progress_ms = self.last_played_ms = 0
+            return 0  # 中断不算作整段已经播放完成。
         self.progress_ms = duration
         self.last_played_ms = duration
         return duration

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from host.ai.providers import ToolSpec
+from host.ai.tool_scope import check_request
 from host.core.errors import ToolValidationError
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
@@ -174,6 +175,7 @@ class ToolRegistry:
 
     def invoke(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """校验通过后执行处理器；返回值必须是 JSON 可序列化对象。"""
+        check_request()
         normalized = self.validate_args(name, arguments)
         result = self._tools[name].handler(normalized)
         if not isinstance(result, dict):

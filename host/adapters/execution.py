@@ -12,24 +12,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from host.adapters.motion_execution import MotionExecutionMixin, fault_code
 from host.core.engine import GREET_INTENT
-from host.core.errors import (
-    ClarifyError,
-    ConflictError,
-    HostError,
-    InterlockError,
-    MotionTimeout,
-    ProtocolError,
-    ProviderError,
-    StorageError,
-)
 from host.core.events import Command, CommandKind, Event, EventKind
-from host.core.state_machine import Trigger
+from host.core.state_machine import State, Trigger
 
 DRAIN_LIMIT = 2000
 WORKER_IDLE_S = 0.005
-# motion worker 有意不动作的命令：NOTIFY 仅通知、STOP/STOP_MOTION 由 MotionClient 的
-# finally 收尾（运动结束即已停机）。其余种类落在此队列即视为装配异常，必须告警。
+# NOTIFY 仅通知；停止/替换先使播放令牌失效，MotionClient 的轮询取消检查负责
+# 中断在途动作并在 finally 执行 STOP。队列里的 STOP 不再等待旧时间线结束才生效。
 MOTION_SILENT_KINDS: frozenset[CommandKind] = frozenset({
     CommandKind.NOTIFY,
     CommandKind.STOP,
@@ -45,7 +36,7 @@ MOTION_SILENT_KINDS: frozenset[CommandKind] = frozenset({
 GREET_ACTION_ID = "greet"
 
 
-class ExecutionMixin:
+class ExecutionMixin(MotionExecutionMixin):
     """依赖宿主提供 ``work`` / ``bus`` / ``engine`` / ``state_machine`` /
     ``motion`` / ``sim`` / ``clock`` / ``player`` / ``_lock`` / ``worker_running``。
     """
@@ -97,6 +88,12 @@ class ExecutionMixin:
         """该命令是否就是当前唯一合法的那次播放（须在 ``self._lock`` 内调用）。"""
         seq = (command.payload or {}).get("play_seq")
         return seq is not None and seq == self._active_play_seq
+
+    def _motion_cancelled(self, command: Command) -> bool:
+        with self._lock:
+            return (command.generation != self.state_machine.generation
+                    or not self._is_current_play(command)
+                    or self.state_machine.state is State.FAULT_LOCKED)
 
     # ---------- 队列消费 ----------
     def pump_once(self) -> bool:
@@ -170,62 +167,6 @@ class ExecutionMixin:
             return None
         return replace(command, payload={**dict(command.payload or {}), **payload})
 
-    def _run_play(self, command: Command) -> None:
-        """在工作线程执行一个动作；长调用不持锁，结果回写时再取锁。"""
-        payload = command.payload
-        action = payload.get("action")
-        seq = payload.get("play_seq")
-        if not action:
-            self._finish_without_motion(seq, command.generation)
-            return
-        try:
-            if self.motion is None:
-                raise ConflictError("未配置运动链路")
-            role_id = int(payload["role_id"])
-            # 第二道防线：入口（ports.play_action / resolve_greet_action）已按角色限幅
-            # 校验过，这里在**真正下发前**再查一次。理由：那两处都是「读文件 → 校验 →
-            # 入队」，而本函数消费的是队列里的载荷 —— 任何绕过入口直接塞进队列的路径
-            # （未来的新端点、注入面、测试夹具）都会跳过入口校验。限幅是机械安全边界，
-            # 必须在**紧贴硬件**的那一层再兜一次。
-            #
-            # 与入口的**失败语义刻意不同**：入口不合规走 409 / 静默降级（内容问题
-            # 不该让设备锁死）；这里不合规意味着「载荷绕过了入口」，属装配/调用面的
-            # 真实异常，交给既有 except 归成 SAFETY_TRIP + 故障锁定（需人工确认）。
-            min_us, max_us = self.role_limits(role_id)
-            result = self.motion.play(action, role_id=role_id,
-                                      min_us=min_us, max_us=max_us)
-        except (HostError, ValueError, OSError) as exc:
-            # OSError 覆盖 pyserial 的 SerialException（串口不存在/被占用/播放中被拔线），
-            # 否则它会越过此处、打穿 worker 线程（P0-2）。
-            with self._lock:
-                self._end_play(seq)
-                self.action_progress = None
-                self._set_fault(exc)
-                self.bus.publish(Event(EventKind.SAFETY_TRIP, payload={"fault": self.fault},
-                                       generation=self.state_machine.generation))
-            return
-        with self._lock:
-            if command.generation != self.state_machine.generation:
-                # 期间被取消/换角色：丢弃本轮结果，不回写进度也不发完成事件。
-                # **只清自己的令牌**：若已被新的播放替换，B 的忙标志必须留着。
-                still_current = self._is_current_play(command)
-                self._end_play(seq)
-                if still_current:
-                    # 离开 PERFORMING 的异常路径必须清进度，否则 /status 会在 IDLE 里
-                    # 一直显示「正在表演 0%」（P2-3）。
-                    self.action_progress = None
-                return
-            self.last_result = result
-            self.fault = None
-            self._end_play(seq)
-            self.action_progress = {
-                "action_id": str(payload.get("action_id", "")),
-                "seq": result.frames_sent,
-                "progress_ms": result.end_ms,
-            }
-            self.bus.publish(Event(EventKind.PERFORM_DONE,
-                                   generation=self.state_machine.generation))
-
     def _finish_without_motion(self, seq: int | None = None,
                               generation: int | None = None) -> None:
         """无动作载荷的 PERFORM_PRESS（如按键表演未选动作）：不移动硬件，直接收尾回 IDLE。
@@ -282,7 +223,15 @@ class ExecutionMixin:
         **禁止静默死亡**（P0-2）：任何未被下层捕获的异常都在此记日志并降级继续，
         同时刷新心跳（``worker_heartbeat_ms``）供 ``/status`` 的存活探针读取。
         """
-        while not (stop_event is not None and stop_event.is_set()):
+        try:
+            self._run_motion_loop(stop_event)
+        finally:
+            self.db.close()  # 保持 check_same_thread=True；在所属线程释放连接。
+
+    def _run_motion_loop(self, stop_event) -> None:
+        while not self._shutdown.is_set() and not (
+            stop_event is not None and stop_event.is_set()
+        ):
             self.worker_heartbeat_ms = self.clock.now_ms()
             try:
                 if self.work.qsize() > 0:
@@ -299,20 +248,3 @@ class ExecutionMixin:
                 self.clock.sleep(WORKER_IDLE_S * 4)
                 continue
             self.clock.sleep(WORKER_IDLE_S)
-
-
-def fault_code(exc: Exception) -> str:
-    """把受控异常映射为契约的故障码（enum: INTERLOCK/TIMEOUT/PWM_INIT/SAFETY_TRIP/...）。"""
-    if isinstance(exc, MotionTimeout):
-        return "TIMEOUT"
-    if isinstance(exc, InterlockError):
-        return "INTERLOCK"
-    if isinstance(exc, ProtocolError):
-        return "TIMEOUT" if "TIMEOUT" in str(exc) else "INTERLOCK"
-    if isinstance(exc, ProviderError):
-        return "PROVIDER"
-    if isinstance(exc, StorageError):
-        return "STORAGE"
-    if isinstance(exc, ClarifyError):
-        return "INTERLOCK"
-    return "SAFETY_TRIP"

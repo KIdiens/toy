@@ -2,7 +2,7 @@
 
 - ``play_content`` 只允许播放已收录的本地内容（``ContentCatalog``）；未收录明确报错。
 - ``play_action`` 只允许当前角色白名单内的动作 ID；越权/不存在一律拒绝，绝不执行任意动作。
-- 实际播放/运动由上层端口执行（本模块只做白名单校验与派发标记）。
+- 只有实际执行端口接受后才返回待执行；动作和内容均在安全回复结束后串行执行。
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 
 from host.ai.tools import ParamSpec, ToolRegistry
 from host.audio.catalog import ContentCatalog
+from host.core.errors import ToolValidationError
 
 ActionIds = Callable[[], Sequence[str]]
 PlayContent = Callable[[str], Any]
@@ -22,23 +23,26 @@ def register(
     catalog: ContentCatalog,
     action_ids: ActionIds,
     play_content: PlayContent | None = None,
+    play_action: PlayContent | None = None,
 ) -> None:
     """注册两个白名单工具；``action_ids`` 返回当前角色允许的动作。"""
 
     def content_handler(args: dict[str, Any]) -> dict[str, Any]:
         item = catalog.get(str(args["item_id"]))
         if item is None:
-            return {"ok": False, "error": f"内容不存在: {args['item_id']}"}
-        if play_content is not None:
-            play_content(item.id)
-        return {"ok": True, "item_id": item.id, "kind": item.kind, "duration_s": item.duration_s}
+            raise ToolValidationError(f"内容不存在: {args['item_id']}")
+        if play_content is None:
+            raise ToolValidationError('本地内容执行端口未装配')
+        return play_content(item.id)
 
     def action_handler(args: dict[str, Any]) -> dict[str, Any]:
         action_id = str(args["action_id"])
         allowed = list(action_ids())
         if action_id not in allowed:
-            return {"ok": False, "error": f"非白名单动作: {action_id}"}
-        return {"ok": True, "action_id": action_id, "scheduled": True}
+            raise ToolValidationError(f"非白名单动作: {action_id}")
+        if play_action is None:
+            raise ToolValidationError('动作执行端口未装配')
+        return play_action(action_id)
 
     registry.register(
         "play_content",

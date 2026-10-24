@@ -48,7 +48,7 @@ class AxisLimitBar extends Base {
         <span class="axis-row__dot" style="background: var(${AXIS_TOKEN(axis)})" aria-hidden="true"></span>
         ${ic('gauge', 16)}
         <span><span class="axis-row__name">轴${axis} ${esc(AXIS_NAME(axis))}</span>
-        <br><span class="xs meta" data-num>中位 ${US_NEUTRAL}µs · ${min}–${max}µs</span></span>
+        <br><span class="xs meta" data-num>中位 ${num(this, 'neutral-us', US_NEUTRAL)}µs · ${min}–${max}µs</span></span>
       </div>
       <div class="axis-track" role="meter" aria-valuemin="${min}" aria-valuemax="${max}"
         aria-valuenow="${v === null ? '' : Math.round(v)}"

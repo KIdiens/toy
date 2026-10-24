@@ -3,6 +3,7 @@
 用法::
 
     python -m host.main --simulate      # 无硬件档位（进程内 MCU 模拟器）
+    python -m host.main --simulate --audio sd  # 模拟 MCU，使用真实声卡
     python -m host.main                 # 串口真机档位
 
 可用 ``--host`` / ``--port`` / ``--db`` / ``--log-level`` 覆盖默认配置。
@@ -10,108 +11,25 @@
 """
 from __future__ import annotations
 
-import argparse
 import logging
 import os
-import sqlite3
-import sys
 import threading
-from tomllib import TOMLDecodeError
 
 import uvicorn
 
 from host.adapters.runtime import build_context
+from host.config.cli import build_env, parse_args
 from host.config.settings import load_settings
+from host.lifecycle import shutdown_runtime
+from host.startup import _CONFIG_ERRORS as _CONFIG_ERRORS
+from host.startup import EXIT_CONFIG_ERROR as EXIT_CONFIG_ERROR
+from host.startup import EXIT_OK, _report_startup_failure, report_shutdown_failure
+from host.startup import EXIT_RUNTIME_ERROR as EXIT_RUNTIME_ERROR
+from host.startup import _describe_config_error as _describe_config_error
 from host.web.app import create_app
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 WORKER_JOIN_TIMEOUT_S = 2.0
-
-# 退出码契约（供 systemd / 容器 / CI 判别「配置错了」还是「运行时崩了」）。
-EXIT_OK = 0
-EXIT_CONFIG_ERROR = 2
-EXIT_RUNTIME_ERROR = 3
-
-# 配置类异常：这些几乎总是「用户把某一项配置写错了」，
-# 给一行中文「哪一项、怎么改」比抛英文 traceback 有用。
-# 分母是显式白名单而非「所有异常」—— 见``_report_startup_failure`` 的误伤面说明。
-_CONFIG_ERRORS: tuple[type[BaseException], ...] = (
-    ValueError,          # int()/float() 解析环境变量失败
-    TOMLDecodeError,     # defaults.toml 语法错
-    KeyError,            # 配置缺必需项
-    FileNotFoundError,   # 配置文件不存在
-    PermissionError,     # 路径不可写
-    OSError,             # 含 sqlite3.OperationalError 之外的 IO 问题
-)
-
-# 运行时类异常里需要特别说明「这是环境/依赖问题」的那些。
-_RUNTIME_HINTS: tuple[type[BaseException], ...] = (
-    sqlite3.Error,       # 库打不开/ 建表失败
-    OSError,             # 串口/ 设备 / 目录不可写
-    ImportError,         # 依赖缺失
-    RuntimeError,        # 典型是 threading.Thread.start() 的「can't start new thread」
-                         # （线程/句柄/内存耗尽）—— 属资源环境问题。
-                         # 代价：真正的编程 bug 若抛 RuntimeError 也会走这条路。
-                         # 之所以可接受：log.exception 仍留全量 traceback、退出码非 0、
-                         # 摘要里带阶段名；而 TypeError/AttributeError/NameError
-                         # 这些最常见的编程错误**不在**本白名单，仍原样抛出。
-)
-
-
-def _describe_config_error(exc: BaseException) -> str:
-    """把配置异常翻译成「哪一项错了、怎么改」的中文一行。"""
-    text = str(exc)
-    if isinstance(exc, ValueError) and "invalid literal for int()" in text:
-        return (
-            f"配置项的取值不是合法数字（{text}）。"
-            "请检查 HOST_PORT / MOTION_BAUD 等环境变量，或 host/config/defaults.toml 里的对应值。"
-        )
-    if isinstance(exc, ValueError) and "Unknown level" in text:
-        return (
-            f"LOG_LEVEL 取值非法（{text}）。"
-            "请改成 DEBUG / INFO / WARNING / ERROR / CRITICAL 之一。"
-        )
-    if isinstance(exc, TOMLDecodeError):
-        return (
-            f"配置文件 host/config/defaults.toml 语法错误（{text}）。"
-            "请检查 TOML 方括号是否成对、是否有中文标点。"
-        )
-    if isinstance(exc, FileNotFoundError):
-        return f"找不到文件（{text}）。请检查配置路径或当前工作目录。"
-    if isinstance(exc, PermissionError):
-        return f"没有权限（{text}）。请检查 DB_PATH 指向的目录是否可写。"
-    return (f"配置无法加载（{type(exc).__name__}: {text}）。"
-            "请检查环境变量与 host/config/defaults.toml。")
-
-
-def _report_startup_failure(exc: BaseException, *, phase: str) -> int:
-    """统一汇报启动期失败：日志留全量 traceback，终端给一行中文 + 返回非 0 退出码。
-
-    **误伤面（重要）**：这里绝不把异常吞掉。``log.exception`` 已把完整 traceback
-    写进日志，终端那行中文只是**额外**的摘要，不是替代品。
-    分界线是「异常类型」而非「是否像编程错误」：
-
-    - 命中 ``_CONFIG_ERRORS`` / ``_RUNTIME_HINTS`` 白名单 → 判为环境/配置问题，
-      给中文指引 + 对应退出码。ValueError/TOMLDecodeError 这类是数据问题，
-      不是代码问题，中文指引不会掩盖任何真相。
-    - 不命中（即TypeError / AttributeError / NameError 等**编程错误**）
-      → 走 ``raise`` 原样抛出，保留 Python 原生 traceback 让人看堆栈。
-
-    反过来说：如果哪天某个 TypeError 其实也想给中文提示，
-    正确做法是修好它或加进白名单，**不要**把 except Exception 写宽。
-    """
-    if isinstance(exc, _CONFIG_ERRORS):
-        code, hint = EXIT_CONFIG_ERROR, _describe_config_error(exc)
-    elif isinstance(exc, _RUNTIME_HINTS):
-        code = EXIT_RUNTIME_ERROR
-        hint = (f"{phase}失败（{type(exc).__name__}: {exc}）。"
-                "请检查 DB_PATH 指向的目录是否可写、串口是否被占用、依赖是否安装。")
-    else:
-        # 编程错误：保持原生 traceback，不伪装成「配置问题」。
-        raise exc
-    logging.getLogger("host.main").exception("启动期失败于%s", phase)
-    print(f"启动失败[{phase}]：{hint}", file=sys.stderr)
-    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -144,57 +62,29 @@ def main(argv: list[str] | None = None) -> int:
         return _report_startup_failure(exc, phase="运行时装配")
 
     stop_event = threading.Event()
+    worker = None
     context.worker_running = True
-    # 领域线程（net / audio / tick）必须与状态机 worker 一同装配，否则 NET_REQUEST 等
-    # 命令无人消费 → 按键对话卡在 THINKING（P0-1）。
     try:
-        context.start_workers()
-    except Exception as exc:  # noqa: BLE001  同上
-        context.close()  # 半启动状态必须收尾，否则领域线程泄漏
-        return _report_startup_failure(exc, phase="启动领域线程")
-    worker = threading.Thread(target=context.run_forever, args=(stop_event,),
-                              name="host-worker", daemon=True)
-    # 必须登记引用：存活探针（context.worker_alive）靠 is_alive() 判活，
-    # 拿不到引用就只能退回心跳判定 —— 而心跳在同步播放期间不更新，
-    # 会把"正在播放"误报成"motion worker 已死"。
-    context.register_motion_thread(worker)
-    worker.start()
-    logger.info("主机服务就绪：http://%s:%s（simulate=%s，AI=%s）",
-                settings.web.host, settings.web.port, context.simulate, settings.ai.provider)
-    try:
+        phase = "启动领域线程"
+        try:
+            context.start_workers()
+            phase = "启动运动线程"
+            worker = threading.Thread(target=context.run_forever, args=(stop_event,),
+                                      name="host-worker", daemon=True)
+            context.register_motion_thread(worker)
+            worker.start()
+        except Exception as exc:  # noqa: BLE001  半启动状态统一收尾
+            return _report_startup_failure(exc, phase=phase)
+        logger.info("主机服务就绪：http://%s:%s（simulate=%s，AI=%s，audio=%s）",
+                    settings.web.host, settings.web.port, context.simulate, settings.ai.provider,
+                    settings.audio.backend)
         uvicorn.run(create_app(context), host=settings.web.host, port=settings.web.port,
                     log_level=settings.logging.level.lower())
     finally:
-        logger.info("主机服务停止，开始收尾")
-        stop_event.set()
-        context.close()  # 内含 stop_workers()：停领域线程并 join
-        worker.join(timeout=WORKER_JOIN_TIMEOUT_S)
+        error = shutdown_runtime(context, worker, stop_event, timeout=WORKER_JOIN_TIMEOUT_S)
+    if error is not None:
+        return report_shutdown_failure(error)
     return EXIT_OK
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """命令行参数（不读全局状态，便于测试）。"""
-    parser = argparse.ArgumentParser(prog="host.main", description="AI 角色玩具主机服务")
-    parser.add_argument("--simulate", action="store_true", help="无硬件档位（进程内 MCU 模拟器）")
-    parser.add_argument("--host", default=None, help="监听地址（覆盖 HOST_BIND）")
-    parser.add_argument("--port", type=int, default=None, help="监听端口（覆盖 HOST_PORT）")
-    parser.add_argument("--db", default=None, help="SQLite 路径（覆盖 DB_PATH）")
-    parser.add_argument("--log-level", default=None, help="日志级别（覆盖 LOG_LEVEL）")
-    return parser.parse_args(argv)
-
-
-def build_env(args: argparse.Namespace, base: dict[str, str] | None = None) -> dict[str, str]:
-    """把命令行覆盖项折成配置层认识的环境变量。"""
-    env = dict(os.environ if base is None else base)
-    if args.host:
-        env["HOST_BIND"] = args.host
-    if args.port:
-        env["HOST_PORT"] = str(args.port)
-    if args.db:
-        env["DB_PATH"] = args.db
-    if args.log_level:
-        env["LOG_LEVEL"] = args.log_level
-    return env
 
 
 if __name__ == "__main__":

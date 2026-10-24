@@ -8,7 +8,9 @@
 """
 from __future__ import annotations
 
+import io
 import threading
+import time
 
 from host.audio.backend import DEFAULT_CHANNELS, DEFAULT_SAMPLE_RATE, Recording
 from host.core.errors import ConfigError
@@ -27,6 +29,7 @@ class SoundDeviceBackend:
     """基于 PortAudio 的采集/播放实现。"""
 
     name = "sounddevice"
+    supports_cancel = True
 
     def __init__(
         self,
@@ -34,83 +37,168 @@ class SoundDeviceBackend:
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         channels: int = DEFAULT_CHANNELS,
         device: str | int | None = None,
+        input_device: str | int | None = None,
+        output_device: str | int | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.device = device
+        self.input_device = device if input_device is None else input_device
+        self.output_device = device if output_device is None else output_device
         self._lock = threading.Lock()
         self._open = False
         self._playing = False
         self._recording = False
+        self._active_cancel: threading.Event | None = None
 
     def open(self) -> None:
         sd = _require("sounddevice")
+        _require("soundfile")
+        with self._lock:
+            if self._open:
+                return
+        try:
+            sd.check_input_settings(device=self.input_device, channels=self.channels,
+                                    dtype="int16", samplerate=self.sample_rate)
+            sd.check_output_settings(device=self.output_device, channels=self.channels,
+                                     dtype="float32", samplerate=self.sample_rate)
+        except (ValueError, sd.PortAudioError) as exc:
+            raise ConfigError(
+                "真实音频设备不可用：请检查 AUDIO_INPUT_DEVICE / AUDIO_OUTPUT_DEVICE "
+                f"和 AUDIO_SAMPLE_RATE；也可用 --audio null 运行仿真。原因：{exc}"
+            ) from exc
         with self._lock:
             self._open = True
-        # 触发一次查询，尽早暴露「无设备/采样率不支持」问题。
-        sd.query_devices(self.device)
 
     def close(self) -> None:
-        sd = _require("sounddevice")
+        self.stop()
         with self._lock:
             self._open = False
-            self._playing = False
-            self._recording = False
-        sd.stop()
 
     @property
     def busy(self) -> bool:
         with self._lock:
             return self._playing or self._recording
 
-    def record(self, max_seconds: float) -> Recording:
+    def _begin(self, *, recording: bool, cancel: threading.Event | None) -> threading.Event:
+        with self._lock:
+            if self._playing or self._recording:
+                raise RuntimeError("半双工互斥：已有录音或播放在执行")
+            cancel = cancel if cancel is not None else threading.Event()
+            self._active_cancel = cancel
+            self._recording = recording
+            self._playing = not recording
+            return cancel
+
+    def _end(self, cancel: threading.Event) -> None:
+        with self._lock:
+            if self._active_cancel is cancel:
+                self._active_cancel = None
+                self._playing = self._recording = False
+
+    def record(self, max_seconds: float, *, cancel: threading.Event | None = None) -> Recording:
         sd = _require("sounddevice")
         if max_seconds <= 0:
             raise ValueError("max_seconds 必须为正")
-        with self._lock:
-            if self._playing:
-                raise RuntimeError("半双工互斥：正在播放时不能录音")
-            self._recording = True
+        cancel = self._begin(recording=True, cancel=cancel)
+        limit = int(max_seconds * self.sample_rate)
+        chunks: list[bytes] = []
+        received = 0
+        errors: list[str] = []
+        done = threading.Event()
+
+        def collect(indata, frames, _time_info, status):
+            nonlocal received
+            if cancel.is_set():
+                raise sd.CallbackAbort
+            if status:
+                errors.append(str(status))
+                raise sd.CallbackAbort
+            count = min(frames, limit - received)
+            chunks.append(bytes(indata)[:count * self.channels * 2])
+            received += count
+            if received >= limit:
+                raise sd.CallbackStop
+
         try:
-            frames = int(max_seconds * self.sample_rate)
-            buffer = sd.rec(frames, samplerate=self.sample_rate, channels=self.channels,
-                            dtype="int16", device=self.device)
-            sd.wait()
-            data = buffer.tobytes()
+            if limit > 0 and not cancel.is_set():
+                stream = sd.RawInputStream(
+                    samplerate=self.sample_rate, channels=self.channels, dtype="int16",
+                    device=self.input_device, callback=collect, finished_callback=done.set,
+                )
+                _run_stream(stream, done, cancel, max_seconds)
+            if errors:
+                raise RuntimeError("录音设备错误：" + "; ".join(errors))
         finally:
-            with self._lock:
-                self._recording = False
+            self._end(cancel)
+        data = b"".join(chunks)
         return Recording(
             data=data,
             sample_rate=self.sample_rate,
             channels=self.channels,
-            duration_s=frames / self.sample_rate,
+            duration_s=received / self.sample_rate,
             clipped=_has_clipping(data),
         )
 
-    def play(self, clip, *, volume: float = 1.0) -> None:
-        import io  # noqa: PLC0415  （仅播放路径需要）
-
+    def play(self, clip, *, volume: float = 1.0, cancel: threading.Event | None = None) -> None:
         sd = _require("sounddevice")
         sf = _require("soundfile")
-        with self._lock:
-            if self._recording:
-                raise RuntimeError("半双工互斥：正在录音时不能播放")
-            self._playing = True
+        cancel = self._begin(recording=False, cancel=cancel)
         try:
-            data, sample_rate = sf.read(io.BytesIO(clip.data), dtype="float32")
-            sd.play(data * float(volume), samplerate=sample_rate, device=self.device)
-            sd.wait()
+            if cancel.is_set():
+                return
+            data, sample_rate = sf.read(io.BytesIO(clip.data), dtype="float32", always_2d=True)
+            data *= float(volume)
+            position = 0
+            done = threading.Event()
+            errors: list[str] = []
+
+            def produce(outdata, frames, _time_info, status):
+                nonlocal position
+                outdata.fill(0)
+                if cancel.is_set():
+                    raise sd.CallbackAbort
+                if status:
+                    errors.append(str(status))
+                    raise sd.CallbackAbort
+                count = min(frames, len(data) - position)
+                outdata[:count] = data[position:position + count]
+                position += count
+                if position >= len(data):
+                    raise sd.CallbackStop
+
+            if len(data):
+                stream = sd.OutputStream(
+                    samplerate=sample_rate, channels=data.shape[1], dtype="float32",
+                    device=self.output_device, callback=produce, finished_callback=done.set,
+                )
+                _run_stream(stream, done, cancel, len(data) / sample_rate)
+            if errors:
+                raise RuntimeError("播放设备错误：" + "; ".join(errors))
         finally:
-            with self._lock:
-                self._playing = False
+            self._end(cancel)
 
     def stop(self) -> None:
-        sd = _require("sounddevice")
         with self._lock:
-            self._playing = False
-            self._recording = False
-        sd.stop()
+            if self._active_cancel is not None:
+                self._active_cancel.set()  # 非阻塞；流由执行录放音的线程中止并关闭。
+
+
+def _run_stream(stream, done: threading.Event, cancel: threading.Event, seconds: float) -> None:
+    try:
+        if cancel.is_set():
+            return
+        deadline = time.monotonic() + seconds + 2.0
+        stream.start()
+        while not done.wait(0.01):
+            if cancel.is_set():
+                stream.abort()
+                break
+            if time.monotonic() >= deadline:
+                stream.abort()
+                raise RuntimeError("音频设备未返回完成信号，已中止本次录放音")
+    finally:
+        stream.close()  # 包括 start() 失败、尚未启动就取消的路径。
 
 
 def _has_clipping(pcm: bytes, *, threshold: int = 32760) -> bool:

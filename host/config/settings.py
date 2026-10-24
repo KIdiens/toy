@@ -58,6 +58,26 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AudioSettings:
+    backend: str = "null"
+    sample_rate: int = 16000
+    input_device: str | int | None = None
+    output_device: str | int | None = None
+
+
+def _audio_device(value: str | int | None) -> str | int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip()
+    if text.lstrip("-").isdecimal():
+        index = int(text)
+        if index < 0:
+            raise ValueError("AUDIO_INPUT_DEVICE / AUDIO_OUTPUT_DEVICE 设备编号必须非负")
+        return index
+    return text
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     motion: MotionSettings
     ai: AiSettings
@@ -65,6 +85,7 @@ class Settings:
     storage: StorageSettings
     cors: CorsSettings
     logging: LoggingSettings
+    audio: AudioSettings = field(default_factory=AudioSettings)
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def redacted(self) -> dict[str, Any]:
@@ -83,6 +104,12 @@ class Settings:
             "storage": {"path": self.storage.path},
             "cors": {"origins": list(self.cors.origins)},
             "logging": {"level": self.logging.level},
+            "audio": {
+                "backend": self.audio.backend,
+                "sample_rate": self.audio.sample_rate,
+                "input_device": self.audio.input_device,
+                "output_device": self.audio.output_device,
+            },
         }
 
 
@@ -105,6 +132,13 @@ def load_settings(
     storage = dict(data.get("storage", {}))
     cors = dict(data.get("cors", {}))
     logging_cfg = dict(data.get("logging", {}))
+    audio = dict(data.get("audio", {}))
+    audio_backend = env.get("AUDIO_BACKEND", audio.get("backend", "null"))
+    if audio_backend not in ("null", "sd"):
+        raise ValueError("AUDIO_BACKEND 必须为 null 或 sd")
+    audio_rate = int(env.get("AUDIO_SAMPLE_RATE", audio.get("sample_rate", 16000)))
+    if not 8000 <= audio_rate <= 192000:
+        raise ValueError("AUDIO_SAMPLE_RATE 必须在 8000–192000 Hz 范围内")
 
     port = env.get("MOTION_PORT", motion.get("port", "socket://127.0.0.1:5555"))
     api_key = env.get("DASHSCOPE_API_KEY") or None
@@ -132,5 +166,11 @@ def load_settings(
         storage=StorageSettings(path=str(db_path)),
         cors=CorsSettings(origins=tuple(origins)),
         logging=LoggingSettings(level=str(env.get("LOG_LEVEL", logging_cfg.get("level", "INFO")))),
+        audio=AudioSettings(
+            backend=audio_backend,
+            sample_rate=audio_rate,
+            input_device=_audio_device(env.get("AUDIO_INPUT_DEVICE", audio.get("input_device"))),
+            output_device=_audio_device(env.get("AUDIO_OUTPUT_DEVICE", audio.get("output_device"))),
+        ),
         raw=data,
     )

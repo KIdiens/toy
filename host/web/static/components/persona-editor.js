@@ -175,6 +175,8 @@ class PersonaEditor extends Base {
 
   /** 是否与「磁盘上的值」不同（规范化比较见 persona-dirty.js：空白/空行不算改动）。 */
   isDirty() { return this._dirty.isDirty(this.read()); }
+  /** 更新落盘基线，保留提交后继续填写的草稿。 */
+  markSaved(persona) { this._dirty.mark(persona); }
 
   /* ---------------------------------------------------------------- 校验 */
   /** 本地限长：返回 false 时保存按钮已被真禁用（不是假按钮）。 */

@@ -17,6 +17,8 @@ Accepted (2026-09-21)
 4. 图标统一 Lucide（ADR-009），颜色用 `currentColor`，尺寸遵循设计规范图标阶梯。
 5. 门禁：静态资源 `grep -E '#[0-9a-fA-F]{3,8}|rgb\(|hsl\('` 命中即不合格（`design-tokens.css` 与 `#fff`/`#000` 除外）。
 
+2026-10-22 补齐原设计的离线字体：四种字体从 `/static/fonts/` 同源加载；WOFF2、各自 OFL 许可和固定来源/哈希随包保留。Noto Sans SC 为现有程序及内容的中文子集，任意用户输入继续保留系统回退。重建命令与实际覆盖范围见 `host/web/static/fonts/README.md`；不使用运行期外网字体服务。
+
 「语义角色 → 实际令牌」导航映射（以文件为准，仅便于实现者按语义定位）：
 
 | 语义角色 | 令牌（以 `design-tokens.css` 为准） |

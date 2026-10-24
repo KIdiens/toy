@@ -8,22 +8,14 @@
 
 /* ---------------------------------------------------------------------------
  * 1. 字体（A1-identity）—— 离线可用硬约束处理
- *    决策：**自托管字体子集**，不使用外链 @import。
- *    开发书硬约束为离线可用；若走 Google Fonts 外链，设备无外网时 3 款字体全部回退，
- *    µs 数值列会失去对齐。故：
- *      1) @font-face 指向本地 /assets/fonts/*.woff2（子集：中文仅收录界面常用字）
- *      2) 回退链为"等宽优先"，即使字体文件缺失，mono 仍落到系统等宽字体，对齐不塌
- *      3) 三种字体均配 font-display: swap，避免首屏白字
- *    子集生成参考（构建期一次性执行，非运行时）：
- *      pyftsubset Lexend-Regular.ttf --unicodes=U+0020-007E --flavor=woff2
- *    许可：Lexend/Figtree/JetBrains Mono/Noto Sans SC 均为 SIL OFL 1.1，允许自托管。
- *    降级行为：字体文件缺失 → 回退至系统中文字体栈；numerals 仍由 tabular-nums 保证列对齐。
+ *    字体及 OFL 许可随包提供，全部从 /static/fonts/ 加载，不请求外网字体服务。
+ *    Noto Sans SC 为现有程序文字子集；未覆盖的用户输入仍由系统字体回退。
+ *    来源版本、哈希及码位见 fonts/sources.json，重建入口为 tools/build_fonts.py。
  * -------------------------------------------------------------------------*/
-@font-face { font-family: 'Lexend'; src: url('/assets/fonts/Lexend-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
-@font-face { font-family: 'Figtree'; src: url('/assets/fonts/Figtree-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
-@font-face { font-family: 'JetBrains Mono'; src: url('/assets/fonts/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
-@font-face { font-family: 'JetBrains Mono'; src: url('/assets/fonts/JetBrainsMono-Medium.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
-@font-face { font-family: 'Noto Sans SC'; src: url('/assets/fonts/NotoSansSC-Variable.woff2') format('woff2-variations'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Lexend'; src: url('/static/fonts/Lexend-Variable.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Figtree'; src: url('/static/fonts/Figtree-Variable.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'JetBrains Mono'; src: url('/static/fonts/JetBrainsMono-Variable.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Noto Sans SC'; src: url('/static/fonts/NotoSansSC-Variable.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
 
 :root {
   --font-display: 'Lexend', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;

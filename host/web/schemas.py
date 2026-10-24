@@ -43,6 +43,7 @@ class ActionPlayRequest(BaseModel):
     role_id: int = Field(ge=1, le=3)
     action_id: str = Field(min_length=1, max_length=60)
     action_version: str | None = None
+    action: dict[str, Any] | None = None
     replace_current: bool = False
 
 
@@ -102,6 +103,27 @@ class ActionProgress(BaseModel):
     progress_ms: int = 0
 
 
+class MotionTarget(BaseModel):
+    """成功写入运动链路的目标，非 MCU ACK 或实测位置。"""
+
+    source: Literal["sent_frame"]
+    role_id: int = Field(ge=1, le=3)
+    config_version: str
+    action_id: str
+    seq: int = Field(ge=0)
+    progress_ms: int = Field(ge=0)
+    target_us: list[int] = Field(min_length=4, max_length=4)
+    valid_for_ms: int = Field(gt=0, le=1000)
+
+
+class AxisLimits(BaseModel):
+    role_id: int = Field(ge=1, le=3)
+    config_version: str
+    min_us: int
+    max_us: int
+    neutral_us: int
+
+
 class Status(BaseModel):
     state: str
     mcu_armed: bool
@@ -114,6 +136,8 @@ class Status(BaseModel):
     action: ActionProgress | None = None
     worker_alive: bool = True
     worker_faults: int = 0
+    target: MotionTarget | None = None
+    axis_limits: AxisLimits | None = None
 
 
 class RoleSummary(BaseModel):

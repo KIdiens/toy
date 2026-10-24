@@ -34,7 +34,14 @@ async def events_stream(websocket: WebSocket) -> None:
             if frame != last:
                 await websocket.send_json(frame)
                 last = frame
-            await asyncio.sleep(POLL_INTERVAL_S)
+            try:
+                async with asyncio.timeout(POLL_INTERVAL_S):
+                    while True:
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            return
+            except TimeoutError:
+                pass  # 当前采样窗口结束；收到的客户端消息不作为控制指令。
     except WebSocketDisconnect:
         return
 
@@ -53,4 +60,6 @@ def _frame(context: AppContext) -> dict[str, Any]:
         "role_id": snap["role_id"],
         "session_generation": snap["session_generation"],
         "action": snap.get("action"),
+        "target": snap.get("target"),
+        "axis_limits": snap.get("axis_limits"),
     }

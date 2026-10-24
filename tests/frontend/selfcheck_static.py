@@ -1,4 +1,5 @@
 """Self-check for host/web/static (run-time verification, not shipped)."""
+import argparse
 import os
 import re
 
@@ -25,91 +26,125 @@ def read_text(path):
         return fh.read()
 
 
-files = []
-for root, _d, fs in os.walk(STATIC):
-    for f in fs:
-        if f.endswith((".html", ".js", ".css")):
-            files.append(os.path.join(root, f))
-files.sort()
 
-print("=== 1) 文件与行数（硬约束：源文件 ≤300 行） ===")
-over = []
-for p in files:
-    with open(p, encoding="utf-8") as fh:
-        n = sum(1 for _ in fh)
-    rel = os.path.relpath(p, STATIC)
-    if n > 300:
-        over.append((rel, n))
-    print(f"   {n:5d}  {rel}")
-print("   OVER-300:", over if over else "无")
-
-print("\n=== 2) Emoji 扫描（范围 1F300-1FAFF/2600-27BF/2190-21FF/1F1E6-1F1FF/FE0F） ===")
-emoji_hits = []
-for p in files:
-    txt = read_text(p)
-    for i, line in enumerate(txt.splitlines(), 1):
-        m = EMOJI.search(line)
-        if m:
-            emoji_hits.append((os.path.relpath(p, STATIC), i, repr(m.group(0))))
-print("   命中数:", len(emoji_hits))
-for h in emoji_hits:
-    print("   HIT", h)
-
-print("\n=== 3) 字面色值扫描（例外：#fff/#000 与 design-tokens.css） ===")
-color_hits = []
-for p in files:
-    txt = read_text(p)
-    for i, line in enumerate(txt.splitlines(), 1):
-        for m in COLOR.finditer(line):
-            v = m.group(0)
-            if v.lower() in ("#fff", "#000", "#ffffff", "#000000"):
-                continue
-            color_hits.append((os.path.relpath(p, STATIC), i, v, line.strip()[:90]))
-print("   命中数:", len(color_hits))
-for h in color_hits[:60]:
-    print("   HIT", h)
-print("   tokens 文件是否唯一含色值落点:",
-      os.path.relpath(TOKENS, ROOT), "存在=", os.path.isfile(TOKENS))
-
-print("\n=== 4) 紫粉渐变扫描 ===")
-grad_hits = []
-for p in files:
-    txt = read_text(p)
-    if GRAD_PINK.search(txt):
-        grad_hits.append(os.path.relpath(p, STATIC))
-print("   命中数:", len(grad_hits), grad_hits)
-
-print("\n=== 5) 图标 ID 核验（每个用到的 ic()/iconMarkup() 必须在 fixture 内） ===")
-with open(FIXTURE, encoding="utf-8") as fh:
-    fixture = {line.strip() for line in fh if line.strip()}
-used = set()
-for p in files:
-    if not p.endswith(".js"):
-        continue
-    txt = read_text(p)
-    used |= set(re.findall(r"""\bic\(\s*['"]([a-z0-9-]+)['"]""", txt))
-    used |= set(re.findall(r"""iconMarkup\(\s*['"]([a-z0-9-]+)['"]""", txt))
-# 组件模板中静态出现的 data-lucide 与 'x'/'moon' 三元写法
-for p in files:
-    txt = read_text(p)
-    used |= set(re.findall(r"""data-lucide=["']([a-z0-9-]+)["']""", txt))
-missing = sorted(u for u in used if u not in fixture)
-print("   使用图标数:", len(used))
-print("   不在 fixture 中的:", missing if missing else "无")
-# 生成模块里实际打包的图标
-gen = read_text(os.path.join(STATIC, "vendor/lucide-icons.js"))
-packed = set(re.findall(r'^\s*"([a-z0-9-]+)":', gen, re.M))
-print("   离线包内图标数:", len(packed), "| 用但未打包:", sorted(used - packed))
-print("   打包但不在 fixture:", sorted(packed - fixture))
-
-print("\n=== 6) 结构自检：页面/契约端点覆盖 ===")
-for name in ["index.html", "editor.html", "roles.html", "memories.html", "reminders.html",
+REQUIRED_PAGES = ["index.html", "editor.html", "roles.html", "memories.html", "reminders.html",
              "settings.html", "api.js", "app.js", "timeline.js", "styles.css",
-             "styles-editor.css"]:
-    print(f"   {name}: {'OK' if os.path.isfile(os.path.join(STATIC, name)) else 'MISSING'}")
-api = read_text(os.path.join(STATIC, "api.js"))
-for ep in ["/status", "/roles", "/roles/active", "/persona", "/persona/preview",
+             "styles-editor.css"]
+REQUIRED_ENDPOINTS = ["/status", "/roles", "/roles/active", "/persona", "/persona/preview",
            "/actions/validate", "/actions/play",
            "/actions/stop", "/content/import", "/memories", "/reminders", "/settings",
-           "/features", "/events"]:
-    print(f"   api 覆盖 {ep}: {'OK' if ep in api else 'MISSING'}")
+           "/features", "/events"]
+
+
+def check(repo_root: str = ROOT) -> int:
+    """扫描真实目录；发现违规或关键输入缺失时返回非零，不允许空扫描通过。"""
+    ROOT = os.path.abspath(repo_root)
+    STATIC = os.path.join(ROOT, "host/web/static")
+    TOKENS = os.path.join(ROOT, "host/web/design/design-tokens.css")
+    FIXTURE = os.path.join(ROOT, "tests/fixtures/lucide-1.47.0-icon-ids.txt")
+    required = [os.path.join(STATIC, name) for name in REQUIRED_PAGES]
+    required += [TOKENS, FIXTURE, os.path.join(STATIC, "vendor/lucide-icons.js")]
+    absent = [p for p in required if not os.path.isfile(p)]
+    if absent:
+        print("RESULT: FAIL，缺少必需文件:", [os.path.relpath(p, ROOT) for p in absent])
+        return 1
+
+    files = []
+    for root, _d, fs in os.walk(STATIC):
+        for f in fs:
+            if f.endswith((".html", ".js", ".css")):
+                files.append(os.path.join(root, f))
+    files.sort()
+
+    print("=== 1) 文件与行数（硬约束：源文件 ≤300 行） ===")
+    over = []
+    for p in files:
+        with open(p, encoding="utf-8") as fh:
+            n = sum(1 for _ in fh)
+        rel = os.path.relpath(p, STATIC)
+        if n > 300:
+            over.append((rel, n))
+        print(f"   {n:5d}  {rel}")
+    print("   OVER-300:", over if over else "无")
+
+    print("\n=== 2) Emoji 扫描（范围 1F300-1FAFF/2600-27BF/2190-21FF/1F1E6-1F1FF/FE0F） ===")
+    emoji_hits = []
+    for p in files:
+        txt = read_text(p)
+        for i, line in enumerate(txt.splitlines(), 1):
+            m = EMOJI.search(line)
+            if m:
+                emoji_hits.append((os.path.relpath(p, STATIC), i, repr(m.group(0))))
+    print("   命中数:", len(emoji_hits))
+    for h in emoji_hits:
+        print("   HIT", h)
+
+    print("\n=== 3) 字面色值扫描（例外：#fff/#000 与 design-tokens.css） ===")
+    color_hits = []
+    for p in files:
+        txt = read_text(p)
+        for i, line in enumerate(txt.splitlines(), 1):
+            for m in COLOR.finditer(line):
+                v = m.group(0)
+                if v.lower() in ("#fff", "#000", "#ffffff", "#000000"):
+                    continue
+                color_hits.append((os.path.relpath(p, STATIC), i, v, line.strip()[:90]))
+    print("   命中数:", len(color_hits))
+    for h in color_hits[:60]:
+        print("   HIT", h)
+    print("   tokens 文件是否唯一含色值落点:",
+          os.path.relpath(TOKENS, ROOT), "存在=", os.path.isfile(TOKENS))
+
+    print("\n=== 4) 紫粉渐变扫描 ===")
+    grad_hits = []
+    for p in files:
+        txt = read_text(p)
+        if GRAD_PINK.search(txt):
+            grad_hits.append(os.path.relpath(p, STATIC))
+    print("   命中数:", len(grad_hits), grad_hits)
+
+    print("\n=== 5) 图标 ID 核验（每个用到的 ic()/iconMarkup() 必须在 fixture 内） ===")
+    with open(FIXTURE, encoding="utf-8") as fh:
+        fixture = {line.strip() for line in fh if line.strip()}
+    used = set()
+    for p in files:
+        if not p.endswith(".js"):
+            continue
+        txt = read_text(p)
+        used |= set(re.findall(r"""\bic\(\s*['"]([a-z0-9-]+)['"]""", txt))
+        used |= set(re.findall(r"""iconMarkup\(\s*['"]([a-z0-9-]+)['"]""", txt))
+    # 组件模板中静态出现的 data-lucide 与 'x'/'moon' 三元写法
+    for p in files:
+        txt = read_text(p)
+        used |= set(re.findall(r"""data-lucide=["']([a-z0-9-]+)["']""", txt))
+    missing = sorted(u for u in used if u not in fixture)
+    print("   使用图标数:", len(used))
+    print("   不在 fixture 中的:", missing if missing else "无")
+    # 生成模块里实际打包的图标
+    gen = read_text(os.path.join(STATIC, "vendor/lucide-icons.js"))
+    packed = set(re.findall(r'^\s*"([a-z0-9-]+)":', gen, re.M))
+    print("   离线包内图标数:", len(packed), "| 用但未打包:", sorted(used - packed))
+    print("   打包但不在 fixture:", sorted(packed - fixture))
+
+    print("\n=== 6) 结构自检：页面/契约端点覆盖 ===")
+    for name in REQUIRED_PAGES:
+        print(f"   {name}: {'OK' if os.path.isfile(os.path.join(STATIC, name)) else 'MISSING'}")
+    api = read_text(os.path.join(STATIC, "api.js"))
+    for ep in REQUIRED_ENDPOINTS:
+        print(f"   api 覆盖 {ep}: {'OK' if ep in api else 'MISSING'}")
+
+    failures = {
+        "超长文件": len(over), "Emoji": len(emoji_hits), "字面色值": len(color_hits),
+        "紫粉渐变": len(grad_hits), "未注册图标": len(missing),
+        "未打包图标": len(used - packed), "包外图标": len(packed - fixture),
+        "缺少接口": sum(ep not in api for ep in REQUIRED_ENDPOINTS),
+    }
+    failed = any(failures.values())
+    print("RESULT:", "FAIL" if failed else "PASS", failures)
+    return int(failed)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="前端静态门禁")
+    parser.add_argument("--root", default=ROOT, help="工程根目录（默认从脚本位置推导）")
+    raise SystemExit(check(parser.parse_args().root))

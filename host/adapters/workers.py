@@ -14,15 +14,18 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from host.adapters.ai_responses import DOMAIN_POLL_S, AiResponsesMixin
+from host.adapters.ai_responses import NET_ERROR_BACKOFF_S as NET_ERROR_BACKOFF_S
+from host.adapters.ai_responses import RECORD_POLL_S as RECORD_POLL_S
+from host.adapters.ai_responses import REPLY_WAIT_S as REPLY_WAIT_S
+from host.adapters.audio_control import CANCEL_KEY
+from host.adapters.shutdown import stop_domain_workers
+from host.audio.recorder import Recorder
 from host.core.events import Command, CommandKind, Event, EventKind
 from host.core.state_machine import State
 
-DOMAIN_POLL_S = 0.05  # 领域队列取件超时（让线程定期回到 stop 判定）
-NET_ERROR_BACKOFF_S = 0.2  # net 线程异常后的退避，避免底层持续故障时空转打满 CPU
 AUDIO_ERROR_BACKOFF_S = 0.2  # audio 线程同理
 TICK_INTERVAL_S = 0.5
-RECORD_POLL_S = 0.02
-REPLY_WAIT_S = 16.0  # 等录音完成的兜底上限（> 单次录制上限）
 NET_THINKING_TIMEOUT_S = 60.0  # THINKING 最长驻留（qwen 单次超时 60s）
 WORKER_JOIN_TIMEOUT_S = 2.0
 DEFAULT_RECORD_LIMIT_S = 15.0
@@ -31,7 +34,7 @@ _RECORD_CAP_EPS_S = 0.05  # 判定「是否触顶录满」的容差
 MAX_SIM_SPEAK_S = 3.0  # 无硬件档位模拟「说话中」的时长上限
 
 
-class WorkersMixin:
+class WorkersMixin(AiResponsesMixin):
     """领域线程的启停与消费循环。
 
     依赖宿主提供：``bus`` / ``state_machine`` / ``clock`` / ``router`` / ``recorder`` /
@@ -49,10 +52,17 @@ class WorkersMixin:
             ("tick", self._tick_loop),
         ):
             thread = threading.Thread(
-                target=target, args=(self._worker_stop,), name=f"host-{name}", daemon=True
+                target=self._run_domain, args=(target, self._worker_stop),
+                name=f"host-{name}", daemon=True
             )
-            thread.start()
             self._domain_threads.append(thread)
+            thread.start()
+
+    def _run_domain(self, target, stop_event) -> None:
+        try:
+            target(stop_event)
+        finally:
+            self.db.close()  # SQLite 连接只能由创建它的线程关闭。
 
     def register_motion_thread(self, thread) -> None:
         """登记 motion worker（``run_forever``）线程引用，供存活探针判活。
@@ -67,98 +77,13 @@ class WorkersMixin:
 
     def stop_workers(self) -> None:
         """请求停止并 join 全部领域线程（幂等）。"""
-        if self._worker_stop is not None:
-            self._worker_stop.set()
-        for thread in list(self._domain_threads):
-            thread.join(timeout=WORKER_JOIN_TIMEOUT_S)
-        self._domain_threads.clear()
-
-    # ---------- net worker ----------
-    def _net_loop(self, stop_event: threading.Event) -> None:
-        """net 队列消费者。
-
-        **外层 try/except 是硬要求**（P0-2 同源纪律）：``net_queue.get()`` 自身抛错、
-        或 ``_handle_net_request`` 之外的代码抛错（宿主被换掉、总线已关闭等）时，
-        本线程会**直接静默死亡**——而 net 一死，NET_REQUEST 再无人消费，按对话键
-        永久停在 THINKING，正是 P0-1 修掉的症状。任何异常都必须记日志并继续循环。
-        """
-        while not stop_event.is_set():
-            try:
-                command = self.net_queue.get(timeout=DOMAIN_POLL_S)
-                if command is None or command.kind is not CommandKind.NET_REQUEST:
-                    if command is not None:
-                        self._warn_unhandled("net", command)
-                    continue
-                self._handle_net_request(command)
-            except Exception as exc:  # noqa: BLE001  线程存活优先于单次失败
-                self._on_worker_error("net", exc)
-                stop_event.wait(NET_ERROR_BACKOFF_S)
-
-    def _handle_net_request(self, command: Command) -> None:
-        generation = command.generation
-        if generation != self.state_machine.generation:
-            self._log_info("net worker 丢弃迟到请求 gen=%s（当前 %s）",
-                           generation, self.state_machine.generation)
-            return
-        try:
-            result = self._respond(command)
-        except Exception as exc:  # noqa: BLE001  领域线程不得因单次失败而退出
-            self._on_worker_error("net", exc)
-            self._publish(EventKind.AI_FAIL, {"reason": f"网络/推理失败: {exc}"}, generation)
-            return
-        if result is None or result.blocked:
-            reason = getattr(result, "reason", "") or "回复被安全检查拦截"
-            self._log_info("net worker 判定失败：%s", reason)
-            self._publish(EventKind.AI_FAIL, {"reason": reason}, generation)
-            return
-        self._publish(
-            EventKind.AI_DONE,
-            {
-                "clip": result.clip,
-                "reply_text": result.reply_text,
-                "user_text": result.user_text,
-            },
-            generation,
-        )
-
-    def _respond(self, command: Command) -> Any:
-        """取本轮录音（若就绪）→ 交给 AiRouter 做 ASR→审核→LLM→工具→审核→TTS。"""
-        if self.router is None:
-            raise RuntimeError("AI 路由未装配（context.router 为空）")
-        recording = self._await_recording(command.generation)
-        wav = recording.data if recording is not None else b""
-        return self.router.respond_audio(wav)
-
-    def _await_recording(self, generation: int) -> Any:
-        """等待本轮录音就绪；若本轮从未开始录音 / 已被新一轮取代则立即返回 None。
-
-        **每轮都要复查 ``_rec_started_gen``**（P1，实测复现）：只在进入时查一次时，
-        旧请求进入等待后用户又按了一次开始录音 → ``_record_once`` 会 ``_rec_ready.clear()``
-        并把 ``_rec_started_gen`` 改成新代数 → 旧请求的
-        ``_last_recording_gen == generation`` 永远不成立，白白等满 ``REPLY_WAIT_S``（16s）。
-        net 是单消费者，排在后面的 NET_REQUEST 全部被堵住，整套对话链路卡死。
-
-        返回 ``None`` 只会让 ``_respond`` 走「这轮没有录音」的既有分支，不会误把别的
-        代数的录音当成自己的 —— 因为取数据仍然要求 ``_last_recording_gen == generation``。
-        """
-        with self._rec_lock:
-            if self._rec_started_gen != generation:
-                return None
-        deadline = self.clock.now_ms() + int(REPLY_WAIT_S * 1000)
-        while self.clock.now_ms() < deadline:
-            with self._rec_lock:
-                if self._rec_started_gen != generation:
-                    # 已被新一轮录音取代：本轮不可能再就绪，立即收口，别占着 net 线程
-                    return None
-                if self._rec_ready.is_set() and self._last_recording_gen == generation:
-                    return self._last_recording
-            self.clock.sleep(RECORD_POLL_S)
-        return None
+        stop_domain_workers(self, timeout=WORKER_JOIN_TIMEOUT_S)
 
     # ---------- audio worker ----------
     def _audio_loop(self, stop_event: threading.Event) -> None:
         """audio 队列消费者；与 net 同纪律，取件本身也必须在兜底内。"""
         while not stop_event.is_set():
+            command = None
             try:
                 command = self.audio_queue.get(timeout=DOMAIN_POLL_S)
                 if command is None:
@@ -166,18 +91,36 @@ class WorkersMixin:
                 self._handle_audio_command(command)
             except Exception as exc:  # noqa: BLE001  线程存活优先于单次失败
                 self._on_worker_error("audio", exc)
+                if command is not None:
+                    self._fail_audio(command, exc)
                 stop_event.wait(AUDIO_ERROR_BACKOFF_S)
+
+    def _fail_audio(self, command: Command, exc: Exception) -> None:
+        phase = {CommandKind.RECORD_START: "record",
+                 CommandKind.PLAY_AUDIO: "play"}.get(command.kind)
+        if phase is None:
+            return
+        with self._lock:
+            if self.audio_control is not None and not self.audio_control.is_current(command):
+                return
+            cancel = command.payload.get(CANCEL_KEY)
+            if phase == "play" and cancel is not None and cancel.is_set():
+                return  # 已被用户打断的旧播放失败，不结束新录音。
+            # 正在说话时允许换角色但不终止声音；当前播放的失败也必须能结束它。
+            generation = self.state_machine.generation if phase == "play" else command.generation
+            self._publish(EventKind.AUDIO_FAIL, {"phase": phase, "reason": str(exc)}, generation)
 
     def _handle_audio_command(self, command: Command) -> None:
         kind = command.kind
         if kind is CommandKind.RECORD_START:
-            self._record_once(command.generation)
+            self._record_once(command.generation, command.payload.get(CANCEL_KEY))
         elif kind is CommandKind.RECORD_STOP:
             self._finish_recording(command.generation)
         elif kind is CommandKind.PLAY_AUDIO:
             self._play_clip(command)
         elif kind is CommandKind.STOP_AUDIO:
-            self.player.stop()
+            if self.audio_control is None:
+                self.player.stop()  # 旧装配兼容；新装配的停止信号已经在入队时发出。
         elif kind is CommandKind.VOLUME_STEP:
             # 先算目标档位、交给 `patch_settings` 统一「落库 + set_level」：
             # 写库失败时档位保持不变，不会出现「档位已变、设置未落库」的分叉；
@@ -187,14 +130,28 @@ class WorkersMixin:
         else:
             self._warn_unhandled("audio", command)
 
-    def _record_once(self, generation: int) -> None:
+    def _record_once(self, generation: int, cancel=None) -> None:
         with self._rec_lock:
             self._rec_ready.clear()
             self._rec_started_gen = generation
-        recording = self.recorder.record(DEFAULT_RECORD_LIMIT_S)
+            self._recording_error = None
+        try:
+            if isinstance(self.recorder, Recorder):
+                recording = self.recorder.record(DEFAULT_RECORD_LIMIT_S, cancel=cancel)
+            else:
+                recording = self.recorder.record(DEFAULT_RECORD_LIMIT_S)
+        except Exception as exc:
+            with self._rec_lock:
+                self._recording_error = exc
+                self._last_recording = None
+                self._last_recording_gen = generation
+                self._last_recording_cancel = cancel
+                self._rec_ready.set()
+            raise
         with self._rec_lock:
             self._last_recording = recording
             self._last_recording_gen = generation
+            self._last_recording_cancel = cancel
             self._rec_ready.set()
         # 仅当「录满上限」时自动结束（用户不会再来按第二下）；否则由用户按键结束，
         # 避免录音一结束就抢先 REC_STOP→THINKING 而把随后的一次按键误判成取消。
@@ -205,21 +162,28 @@ class WorkersMixin:
     def _finish_recording(self, generation: int) -> None:
         with self._rec_lock:
             done = self._rec_ready.is_set() and self._rec_started_gen == generation
-        if not done:
+        if not done and self.audio_control is None:
             self._record_once(generation)  # 兜底：RECORD_START 未到/未完成
 
     def _play_clip(self, command: Command) -> None:
+        cancel = command.payload.get(CANCEL_KEY)
+        if cancel is not None and cancel.is_set():
+            return
         clip = command.payload.get("clip")
         duration_s = 0.0
-        if clip is not None:
-            duration_s = float(getattr(clip, "duration_s", 0.0) or 0.0)
-            self.player.play(clip)
-        if self.simulate and duration_s > 0.0:
-            # 无硬件档位：空后端不阻塞（Player 契约「空后端零等待」），这里按片段时长
-            # 模拟「说话中」，使 SPEAKING 在 UI/端到端可被观测，时序与真机一致。
-            self.clock.sleep(min(duration_s, MAX_SIM_SPEAK_S))
-        # 无论有无音频载荷都回投 PLAY_DONE，避免 SPEAKING 因缺帧而卡死。
-        self._publish(EventKind.PLAY_DONE, {}, command.generation)
+        try:
+            if clip is not None:
+                duration_s = float(getattr(clip, "duration_s", 0.0) or 0.0)
+                self.player.play(clip, cancel=cancel)
+            if self.simulate and self.player.backend.name == "null" and duration_s > 0.0:
+                if cancel is not None:
+                    cancel.wait(min(duration_s, MAX_SIM_SPEAK_S))
+                else:
+                    self.clock.sleep(min(duration_s, MAX_SIM_SPEAK_S))
+        finally:
+            self.player.stop()
+        if cancel is None or not cancel.is_set():
+            self._publish(EventKind.PLAY_DONE, {}, command.generation)
 
     # ---------- tick worker：提醒到期 + THINKING 超时 ----------
     def _tick_loop(self, stop_event: threading.Event) -> None:

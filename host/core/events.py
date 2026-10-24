@@ -22,6 +22,7 @@ class EventKind(StrEnum):
     REC_CANCEL = "rec_cancel"
     AI_DONE = "ai_done"
     AI_FAIL = "ai_fail"
+    AUDIO_FAIL = "audio_fail"
     PLAY_DONE = "play_done"
     PERFORM_DONE = "perform_done"
     SAFETY_TRIP = "safety_trip"

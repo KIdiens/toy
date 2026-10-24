@@ -10,8 +10,10 @@
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 
 from host.ai import safety
 from host.ai.providers import (
@@ -22,6 +24,7 @@ from host.ai.providers import (
     Message,
     TtsProvider,
 )
+from host.ai.tool_scope import check_request, collect_effects, has_pending_media
 from host.ai.tools import ToolRegistry
 from host.core.errors import ToolValidationError
 
@@ -31,8 +34,18 @@ SAFETY_CLAUSE = (
     "不知道就直说不知道，不编造。"
     "不索要住址、学校、密码等隐私。"
     "危险现实操作要引导去找成年人。"
+    "播放工具返回 pending_reply 时，仅表示等待当前回复结束，尚未开始或完成。"
+    "应说接下来会执行，不得声称已经播放或完成。"
 )
 MAX_TOOL_ROUNDS = 2
+PENDING_COMPLETION = re.compile(
+    r'(?:^|[。！？.!?])\s*(?:'
+    r'我(?:已经|已|刚刚|刚才)(?:帮你|替你|为你)?(?:开始)?(?:播放|播完|挥手|点头|完成|执行)'
+    r'|我(?:帮你|替你|为你)(?:已经|已)?(?:播完|播放好了|完成了|挥完手|点完头)'
+    r'|(?:动作|表演|故事|音效)(?:已经|已)(?:播放|执行|完成|结束)'
+    r"|I(?:'ve| have)?\s+(?:already|just)\s+(?:played|finished|completed|performed|started))",
+    re.IGNORECASE,
+)
 
 MemoryProvider = Callable[[], Sequence[str]]
 PersonaProvider = Callable[[], str]
@@ -41,7 +54,7 @@ VoiceProvider = Callable[[], str]
 
 @dataclass(frozen=True, slots=True)
 class AiResult:
-    """一轮对话的结果。``clip`` 可能在纯文本模式下为 ``None``。"""
+    """一轮结果；performances 是待执行快照，refusal_ready 标记安全拒绝语音。"""
 
     user_text: str
     reply_text: str
@@ -50,6 +63,8 @@ class AiResult:
     reason: str = ""
     tool_calls: tuple[str, ...] = ()
     tool_rejected: tuple[str, ...] = ()
+    performances: tuple[dict, ...] = ()
+    refusal_ready: bool = False
 
 
 class AiRouter:
@@ -94,10 +109,19 @@ class AiRouter:
 
     # ---------- 对外入口 ----------
     def respond_audio(self, wav: bytes, *, lang: str | None = None) -> AiResult:
+        check_request()
         text = self.asr.transcribe(wav, lang)
+        check_request()
         return self.respond_text(text, lang=lang)
 
     def respond_text(self, text: str, *, lang: str | None = None) -> AiResult:
+        with collect_effects() as effects:
+            result = self._respond_text(text, lang=lang)
+        approved = () if result.blocked or result.tool_rejected else tuple(effects)
+        return replace(result, performances=approved)
+
+    def _respond_text(self, text: str, *, lang: str | None = None) -> AiResult:
+        check_request()
         user_text = safety.neutralize(text)
         reviewed = safety.review_input(user_text)
         if not reviewed.ok:
@@ -105,7 +129,9 @@ class AiRouter:
                                   lang=lang)
 
         messages = self._build_messages(user_text)
+        check_request()
         first = self.llm.complete(messages, tools=self.registry.specs())
+        check_request()
         final, used, rejected = self._run_tools(first, messages)
         if rejected:
             return self._finalize(user_text, safety.CANNOT_FABRICATE_TEMPLATE, blocked=True,
@@ -129,7 +155,7 @@ class AiRouter:
 
     def _run_tools(self, reply: LlmReply, messages: list[Message]
                    ) -> tuple[LlmReply, list[str], list[str]]:
-        """执行工具回合，返回 ``(最终回复, 已执行工具, 被拒工具)``。
+        """执行工具回合，返回 ``(最终回复, 已受理工具, 被拒工具)``。
 
         返回**最终回复**是这一段的关键：早前版本只返回 ``used/rejected``，把工具回合之后
         重新生成的答复丢在函数里（`reply = current` 是死赋值），于是工具调用的结果永远
@@ -138,23 +164,41 @@ class AiRouter:
         used: list[str] = []
         rejected: list[str] = []
         current = reply
+        seen = {}
         for _round in range(MAX_TOOL_ROUNDS):
             if not current.tool_calls:
                 break
             for call in current.tool_calls:
+                check_request()
                 try:
-                    result = self.registry.invoke(call.name, call.arguments)
+                    call_id = getattr(call, 'call_id', '')
+                    previous = seen.get(call_id) if call_id else None
+                    if previous is not None:
+                        if previous[:2] != (call.name, call.arguments):
+                            raise ToolValidationError('同一调用编号携带了不同工具或参数')
+                        result = previous[2]
+                    else:
+                        result = self.registry.invoke(call.name, call.arguments)
+                        if call_id:
+                            seen[call_id] = (call.name, deepcopy(call.arguments), result)
                 except ToolValidationError as exc:
                     rejected.append(call.name)
                     if self.logger is not None:
                         self.logger.warning("tool rejected: %s (%s)", call.name, exc)
                     continue
-                used.append(call.name)
+                if previous is None:
+                    used.append(call.name)
                 messages.append(Message("assistant", current.text or f"[调用 {call.name}]"))
                 messages.append(Message("tool", f"{call.name} 返回: {result}"))
             if rejected:
                 break
+            check_request()
             current = self.llm.complete(messages, tools=self.registry.specs())
+            check_request()
+        if current.tool_calls and not rejected:
+            rejected.extend(call.name for call in current.tool_calls)
+            if self.logger is not None:
+                self.logger.warning('工具回合上限后仍有未完成请求，本轮不执行播放任务')
         return current, used, rejected
 
     def _finalize(
@@ -170,7 +214,15 @@ class AiRouter:
     ) -> AiResult:
         reviewed = safety.review_output(text)
         final_text = reviewed.text if not reviewed.ok else text
+        if reviewed.ok and has_pending_media() and PENDING_COMPLETION.search(final_text):
+            final_text = ('Okay, I will play these tasks after this reply.' if lang == 'en'
+                          else '好的，我会在回复结束后按顺序播放。')
+            reason = reason or '播放任务尚待执行，已修正提前声称完成的表述'
+        check_request()
         clip = self.tts.synthesize(final_text, self._current_voice(), lang)
+        check_request()
+        refusal = (safety.GUIDE_ADULT_TEMPLATE, safety.REFUSE_PRIVATE_TEMPLATE,
+                   safety.CANNOT_FABRICATE_TEMPLATE)
         return AiResult(
             user_text=user_text,
             reply_text=final_text,
@@ -179,4 +231,6 @@ class AiRouter:
             reason=reason or reviewed.reason,
             tool_calls=tool_calls,
             tool_rejected=tool_rejected,
+            refusal_ready=((blocked or not reviewed.ok) and final_text in refusal
+                           and clip is not None),
         )

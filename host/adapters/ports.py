@@ -15,23 +15,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from host.adapters.action_documents import prepare_play_document, read_document
 from host.adapters.execution import GREET_ACTION_ID, ExecutionMixin
 from host.adapters.injection import InjectionMixin
 from host.adapters.services import StorageFacade
+from host.adapters.shutdown import close_context
+from host.adapters.status import WORKER_LIVENESS_MS as WORKER_LIVENESS_MS
+from host.adapters.status import StatusMixin, TargetSample
 from host.adapters.workers import WorkersMixin
 from host.core.engine import Engine
-from host.core.errors import ConflictError, HostError, StorageError
+from host.core.errors import ConflictError, HostError
 from host.core.events import CommandKind
 from host.core.state_machine import SessionStateMachine, State, Trigger
 from host.motion.client import MotionClient, PlayResult
 from host.roles.schema import FW_MAX_US, FW_MIN_US
 
-# worker 心跳新鲜度阈值：超过即视为「线程已死」（/status 的 worker_alive 探针）。
-WORKER_LIVENESS_MS = 5000
-
 
 @dataclass
-class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
+class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade, StatusMixin):
     """运行期上下文（一个进程一份）。"""
 
     settings: Any
@@ -63,14 +64,18 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     worker_running: bool = False
     fault: dict[str, str] | None = None
     action_progress: dict[str, Any] | None = None
+    _target_sample: TargetSample | None = field(default=None, repr=False)
     last_result: PlayResult | None = None
     log: Any = field(default=None, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     # ---- 领域工作线程（P0-1）：队列句柄、启停句柄、存活探针 ----
     net_queue: Any = None
     audio_queue: Any = None
+    audio_control: Any = field(default=None, repr=False)
     _router: Any = field(default=None, repr=False)
+    tool_performer: Any = field(default=None, repr=False)
     _worker_stop: Any = field(default=None, repr=False)
+    _shutdown: threading.Event = field(default_factory=threading.Event, repr=False)
     _domain_threads: list = field(default_factory=list, repr=False)
     # motion worker（run_forever）由 main.py 单独起线程，必须在此登记引用 ——
     # 存活探针要靠它判活，见 worker_alive() 的说明。
@@ -102,6 +107,8 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
     _rec_ready: threading.Event = field(default_factory=threading.Event, repr=False)
     _last_recording: Any = field(default=None, repr=False)
     _last_recording_gen: int = -1
+    _last_recording_cancel: Any = field(default=None, repr=False)
+    _recording_error: Exception | None = field(default=None, repr=False)
     _rec_started_gen: int = -1
     _thinking_since_ms: int | None = None
     _recording_since_ms: int | None = None
@@ -120,70 +127,6 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         令牌仍是当前令牌时才清，因此旧播放结束**不可能**清掉新播放的忙标志。
         """
         return self._active_play_seq is not None
-
-    # ---------- 状态快照 ----------
-    def _mcu_snapshot(self) -> dict[str, Any]:
-        if self.sim is not None:
-            return {
-                "armed": bool(self.sim.armed),
-                "docked": self.sim.docked(),
-                "healthy": self.sim.healthy(),
-            }
-        return {"armed": self.mcu_armed, "docked": self.mcu_docked, "healthy": self.mcu_healthy}
-
-    def status_snapshot(self) -> dict[str, Any]:
-        mcu = self._mcu_snapshot()
-        fault = self.fault
-        if fault is None and self.state_machine.state is State.FAULT_LOCKED:
-            fault = {"code": "SAFETY_TRIP", "detail": "安全联锁已锁定，需人工确认"}
-        return {
-            "state": self.state_machine.state.value,
-            "mcu_armed": mcu["armed"],
-            "docked": mcu["docked"],
-            "estop_healthy": mcu["healthy"],
-            "role_id": self.roles.active_role_id or 0,
-            "session_generation": self.state_machine.generation,
-            "network_online": bool(self.network_online),
-            "fault": fault,
-            "action": self.action_progress,
-            "worker_alive": self.worker_alive(),
-            "worker_faults": int(self.worker_faults),
-        }
-
-    def worker_alive(self) -> bool:
-        """存活探针：领域线程（net/audio/tick）**与 motion worker** 逐个健在。
-
-        为什么不能只看心跳：``worker_heartbeat_ms`` 只由 motion worker 写
-        （``execution.run_forever``），三个领域线程全死时心跳依然新鲜，
-        ``/status`` 会返回假的 ``worker_alive: true`` —— 而领域线程一死，
-        按对话键就永久停在 THINKING（P0-1 症状复发）。
-
-        **为什么心跳不能作为判活依据（曾踩的坑）**：心跳写在 ``run_forever``
-        的 ``while`` 循环**开头**，紧接着 ``pump_once()`` -> ``play_action()``
-        **同步阻塞整个动作时长**（``client.py`` 轮询到末帧保持 150ms）。
-        于是播放期间心跳全程不更新，超过 ``WORKER_LIVENESS_MS``（5s）后
-        ``wave.json``（4000ms 时间轴）这类动作必然让探针在**线程全健在**时
-        返回 False —— 谎报。且 ``TAIL_TIMEOUT_S`` 只管末帧之后的超时，
-        **不限制时间轴本身**，故阻塞时长无固定上界，提高阈值是治标不治本。
-
-        因此判活一律以 ``is_alive()`` 为准：motion 线程由 ``main.py`` 启动后
-        登记到 ``_motion_thread``，与领域线程同源检查。
-        心跳仅在**线程尚未登记**时作为兜底（保留第 2 组"启动窗口不误报"的成果）。
-        """
-        threads = list(getattr(self, "_domain_threads", []) or [])
-        if not threads:
-            return False  # 从未启动：不得报活
-        if not all(getattr(t, "is_alive", lambda: False)() for t in threads):
-            return False
-        motion = getattr(self, "_motion_thread", None)
-        if motion is not None:
-            # 已登记：线程是否健在就是唯一依据，无论心跳多旧（可能正同步播放中）
-            return bool(getattr(motion, "is_alive", lambda: False)())
-        heartbeat = self.worker_heartbeat_ms
-        if heartbeat is not None:
-            return (self.clock.now_ms() - heartbeat) <= WORKER_LIVENESS_MS
-        # 心跳尚无（motion worker 未启动或还没跑一轮）：领域线程健在即视为可用。
-        return True
 
     def role_summaries(self) -> list[dict[str, Any]]:
         return self.roles.summaries()
@@ -350,8 +293,12 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
         if self.log is not None:
             self.log.warning("表演键打招呼动作未解析，本轮只做状态收尾：%s", reason)
 
+    def action_document(self, *, role_id: int, action_id: str) -> dict[str, Any]:
+        return read_document(self, role_id, action_id)
+
     def play_action(self, *, role_id: int, action_id: str,
                     action_version: str | None = None,
+                    action: dict[str, Any] | None = None,
                     replace_current: bool = False) -> dict[str, Any]:
         """校验 → 入队 → 置忙；真实运动由 worker 执行（同步返回，不阻塞 HTTP）。"""
         with self._lock:
@@ -360,8 +307,10 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                 raise ConflictError("未加载任何角色，无法播放")
             if int(role_id) != int(active):
                 raise ConflictError(f"角色不匹配：请求 {role_id}，当前 {active}")
-            if action_id not in self.roles.actions_for(active):
+            if action is None and action_id not in self.roles.actions_for(active):
                 raise ConflictError(f"非当前角色白名单动作: {action_id}")
+            draft = action is not None
+            action = prepare_play_document(self, active, action_id, action_version, action)
             if self.state_machine.state is State.FAULT_LOCKED:
                 raise ConflictError("处于故障锁定，需人工确认后才能运动")
             if self.motion_busy or self.state_machine.state is State.PERFORMING:
@@ -378,26 +327,8 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                 raise ConflictError(
                     f"当前状态 {self.state_machine.state.value} 不接受播放指令"
                 )
-            path = self.roles.action_path(active, action_id)
-            if path is None:
-                raise ConflictError(f"动作文件不存在: {action_id}")
-            action = json.loads(Path(path).read_text(encoding="utf-8"))
-            verdict = self.validate_action(action)
-            if not verdict["valid"]:
-                # 动作文件非法必须在**入口**拒绝。否则会一路下发到 `MotionClient.play` 的
-                # `validate()` 抛错，被 `_run_play` 归类为 SAFETY_TRIP → 设备直接进故障锁定，
-                # 「文件写错了」的表现变成「玩具坏了、要人工解除」。
-                raise ConflictError(f"动作文件非法: {verdict['errors']}")
-            if not self._action_matches_role(action, active):
-                # 入口承诺「内容错误在入口拒绝、不锁机」。动作自称的 role_id 与要播它
-                # 的角色不一致时，限幅会按两个不同角色各判一次：入口按动作自称的
-                # role_id 判（通过），下发前按激活角色判（越限 → SAFETY_TRIP 锁机）。
-                # 这是内容错误，必须在入口以 409 拒绝，而不是把设备锁死等人工确认。
-                raise ConflictError(
-                    f"动作文件的 role_id（{action.get('role_id')}）与当前角色 "
-                    f"{active} 不一致，拒绝播放"
-                )
-            self.roles.set_current_action(action_id)
+            if not draft:
+                self.roles.set_current_action(action_id)
             # **先激活令牌、再入队**：worker 可能在本函数返回前就取到命令；若先入队
             # 后激活，它会看到「令牌不符」把这一条新命令当陈旧丢掉。整个 play_action
             # 都持 ``self._lock``（RLock），worker 的判定也在同一把锁内，不会插队。
@@ -422,6 +353,8 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
 
     def stop_action(self) -> dict[str, Any]:
         with self._lock:
+            if self.tool_performer is not None:
+                self.tool_performer.cancel()
             # **先让所有在途播放失效，再停机**：停止的语义是「这一刻之后不得再开播」。
             # 递增序号而不是只清当前令牌 —— 队列里可能还压着更早的 PLAY_ACTION，
             # 它们也必须一并作废（stop 不改代数，靠 generation 判不出来）。
@@ -433,6 +366,8 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
                 triggers.append(Trigger.PERFORM_PRESS)
             elif state is State.SPEAKING:
                 triggers.append(Trigger.PLAY_DONE)
+            elif state is State.THINKING:
+                triggers.append(Trigger.DIALOG_PRESS)  # 停止也作废尚未返回的 AI 播放计划。
             for trigger in triggers:
                 self._deliver(self.engine.apply(trigger, {"stopped": True}))
             if not self.worker_running:
@@ -444,13 +379,4 @@ class AppContext(ExecutionMixin, InjectionMixin, WorkersMixin, StorageFacade):
 
     # ---------- 关停 ----------
     def close(self) -> None:
-        self.stop_workers()  # 先停领域线程，再关总线/设备，避免线程在关停中投事件
-        self.bus.shutdown()
-        self.player.backend.close()
-        if self._router is not None:
-            self._router.close()
-        try:
-            self.db.close_all()
-        except StorageError:  # 关停阶段的存储异常只记录，不掩盖
-            if self.log is not None:
-                self.log.warning("关闭数据库连接时出错", exc_info=True)
+        close_context(self)

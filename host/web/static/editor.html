@@ -18,6 +18,7 @@
 
   <editor-shell>
     <div slot="left" class="stack">
+      <button id="files-close" type="button" class="btn btn--ghost editor__files-control">关闭角色与文件</button>
       <role-select id="role"></role-select>
       <hr class="hr">
       <track-list id="tracks"></track-list>
@@ -27,6 +28,10 @@
 
     <div slot="center">
       <div class="editor__toolbar">
+        <button id="files-toggle" type="button" class="btn btn--ghost editor__files-control"
+          aria-controls="editor-files-panel" aria-expanded="false">角色与文件</button>
+        <button id="inspector-toggle" type="button" class="btn btn--ghost editor__inspector-control"
+          aria-controls="editor-inspector-panel" aria-expanded="false">关键帧属性</button>
         <timecode-display id="tc" ms="0" total-ms="0"></timecode-display>
         <span class="grow"></span>
         <span class="chip">离线预演 · 本地插值 s(u)=3u²−2u³</span>
@@ -60,6 +65,7 @@
     </div>
 
     <div slot="right" class="stack">
+      <button id="inspector-close" type="button" class="btn btn--ghost editor__inspector-control">关闭关键帧属性</button>
       <keyframe-inspector id="inspector" max-speed="300"></keyframe-inspector>
       <hr class="hr">
       <axis-limit-panel id="limits" nodata="true"></axis-limit-panel>
